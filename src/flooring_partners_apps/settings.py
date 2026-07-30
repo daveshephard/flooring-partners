@@ -179,12 +179,28 @@ MEDIA_URL = "/media/"
 
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
-AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", "us-east-1")
 
-# Custom S3 endpoint. Set this for any S3-compatible object store that isn't
-# AWS itself — e.g. Railway's bucket / MinIO. Leave empty to use real AWS S3.
-AWS_S3_ENDPOINT_URL = os.environ.get("AWS_S3_ENDPOINT_URL", "") or None
+# Accept both the django-storages setting names and the boto3 / AWS-CLI-standard
+# names that Railway's bucket service injects (AWS_S3_BUCKET_NAME,
+# AWS_ENDPOINT_URL, AWS_DEFAULT_REGION), so the bucket's own variables work as-is
+# without renaming anything in Railway.
+AWS_STORAGE_BUCKET_NAME = (
+    os.environ.get("AWS_STORAGE_BUCKET_NAME")
+    or os.environ.get("AWS_S3_BUCKET_NAME", "")
+)
+AWS_S3_REGION_NAME = (
+    os.environ.get("AWS_S3_REGION_NAME")
+    or os.environ.get("AWS_DEFAULT_REGION")
+    or "us-east-1"
+)
+
+# Custom S3 endpoint. Set for any S3-compatible object store that isn't AWS
+# itself — e.g. Railway's bucket / MinIO. Empty → real AWS S3.
+AWS_S3_ENDPOINT_URL = (
+    os.environ.get("AWS_S3_ENDPOINT_URL")
+    or os.environ.get("AWS_ENDPOINT_URL")
+    or None
+)
 
 AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = True
