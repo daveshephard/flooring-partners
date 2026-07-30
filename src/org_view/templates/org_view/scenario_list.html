@@ -1,0 +1,98 @@
+{% extends "org_view/base.html" %}
+
+{% block title %}Scenarios — {{ company.name }}{% endblock %}
+{% block nav_index %}active{% endblock %}
+
+{% block extra_css %}
+<style>
+  .sc-list { display: grid; gap: 0.8rem; }
+  .sc-item {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 1rem; text-decoration: none; color: var(--text-main);
+  }
+  .sc-item:hover { border-color: var(--accent); }
+  .sc-name { font-family: 'Titillium Web', sans-serif; font-size: 1.05rem; font-weight: 600; }
+  .sc-meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.2rem; }
+  .sc-desc { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.35rem; }
+  .sc-create { margin-bottom: 1.75rem; }
+  .sc-create .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 640px) { .sc-create .grid2 { grid-template-columns: 1fr; } }
+  .badge-draft { background: var(--accent-soft); color: var(--accent-light); }
+  .badge-final { background: rgba(106,191,105,0.15); color: var(--success); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <h1>Scenarios</h1>
+    <p>Model changes to the {{ company.name }} org — clean up the imported structure or design a new one, and see the headcount &amp; cost impact.</p>
+  </div>
+  <div>
+    <a href="{% url 'org_view:company_detail' slug=company.slug %}" class="btn btn-secondary btn-sm">&larr; Org chart</a>
+  </div>
+</div>
+
+{% if can_edit %}
+  {% if snapshots %}
+  <div class="card sc-create">
+    <form method="post" action="{% url 'org_view:scenario_create' slug=company.slug %}">
+      {% csrf_token %}
+      <div class="grid2">
+        <div class="form-group" style="margin-bottom:0.6rem;">
+          <label for="sc-name">Scenario name</label>
+          <input class="form-control" id="sc-name" name="name" placeholder="e.g. FY27 Reorg" required>
+        </div>
+        <div class="form-group" style="margin-bottom:0.6rem;">
+          <label for="sc-base">Base it on</label>
+          <select class="form-control" id="sc-base" name="base_snapshot_id">
+            {% for s in snapshots %}
+              <option value="{{ s.id }}"{% if s.is_current %} selected{% endif %}>
+                {{ s.label|default:"Unlabeled" }} — {{ s.effective_date|default:s.upload_date.date }}{% if s.is_current %} (current){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0.6rem;">
+        <label for="sc-desc">Description (optional)</label>
+        <input class="form-control" id="sc-desc" name="description" placeholder="What is this scenario exploring?">
+      </div>
+      <div class="form-actions" style="margin-top:0.6rem;">
+        <button type="submit" class="btn btn-primary btn-sm">Create scenario</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="card" style="margin-bottom:1.75rem; color: var(--text-muted);">
+    Upload a census for {{ company.name }} first — a scenario is created from a saved snapshot.
+  </div>
+  {% endif %}
+{% endif %}
+
+<div class="section-heading">Existing scenarios</div>
+
+{% if scenarios %}
+<div class="sc-list">
+  {% for sc in scenarios %}
+  <a class="card sc-item" href="{% url 'org_view:scenario_detail' slug=company.slug scenario_id=sc.id %}">
+    <div>
+      <div class="sc-name">{{ sc.name }}</div>
+      <div class="sc-meta">
+        Based on {{ sc.base_snapshot.label|default:"Unlabeled" }}
+        ({{ sc.base_snapshot.effective_date|default:"—" }})
+        · updated {{ sc.updated_at|date:"M j, Y" }}
+        {% if sc.created_by %}· by {{ sc.created_by.get_username }}{% endif %}
+      </div>
+      {% if sc.description %}<div class="sc-desc">{{ sc.description }}</div>{% endif %}
+    </div>
+    <span class="badge badge-{{ sc.status }}">{{ sc.get_status_display }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state card" style="text-align:center; color:var(--text-muted);">
+  No scenarios yet.{% if can_edit and snapshots %} Create one above to get started.{% endif %}
+</div>
+{% endif %}
+{% endblock %}

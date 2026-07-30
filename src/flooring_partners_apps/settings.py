@@ -180,19 +180,26 @@ MEDIA_URL = "/media/"
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
-AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", "us-west-2")
+AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", "us-east-1")
+
+# Custom S3 endpoint. Set this for any S3-compatible object store that isn't
+# AWS itself — e.g. Railway's bucket / MinIO. Leave empty to use real AWS S3.
+AWS_S3_ENDPOINT_URL = os.environ.get("AWS_S3_ENDPOINT_URL", "") or None
 
 AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = True
 AWS_QUERYSTRING_EXPIRE = 3600
 AWS_S3_FILE_OVERWRITE = False
 AWS_S3_SIGNATURE_VERSION = "s3v4"
-AWS_S3_ADDRESSING_STYLE = "virtual"
+# MinIO / Railway buckets serve on a single host and need path-style URLs
+# (https://endpoint/bucket/key); real AWS uses virtual-hosted style.
+AWS_S3_ADDRESSING_STYLE = "path" if AWS_S3_ENDPOINT_URL else "virtual"
 AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
 
-# Use S3 only when a bucket is actually configured. Phase 1 uploads nothing,
-# so the local filesystem backend is correct until the Org View port.
-_USE_S3 = bool(AWS_STORAGE_BUCKET_NAME) and not DEBUG
+# Use S3 whenever a bucket is configured (works in DEBUG too, so the upload
+# path can be exercised locally against the same bucket). No bucket name set
+# → local filesystem storage, which is the right default for dev.
+_USE_S3 = bool(AWS_STORAGE_BUCKET_NAME)
 
 STORAGES = {
     "default": {

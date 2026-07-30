@@ -499,6 +499,7 @@
         {% if row.latest %}
         <a href="{% url 'org_view:company_detail' slug=row.company.slug %}">Org Chart</a>
         <a href="{% url 'org_view:trends' slug=row.company.slug %}">Trends</a>
+        <a href="{% url 'org_view:scenario_list' slug=row.company.slug %}">Scenarios</a>
         {% endif %}
         <a href="{% url 'org_view:upload' %}">Upload Census</a>
       </div>

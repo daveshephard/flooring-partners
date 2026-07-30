@@ -50,6 +50,21 @@ def build_tree(
         the snapshot has multiple roots and no explicit root is given.
     """
     emp_rows = _fetch_employees(snapshot_id)
+    return build_tree_from_rows(emp_rows, root_employee_id=root_employee_id, max_depth=max_depth)
+
+
+def build_tree_from_rows(
+    emp_rows: list[dict],
+    root_employee_id: str | None = None,
+    max_depth: int | None = None,
+) -> dict | list[dict]:
+    """Build a nested org tree from pre-fetched rows.
+
+    Each row must carry the keys in ``_FIELDS`` (``employee_id``,
+    ``raw_supervisor_id``, pay/attribute fields, …). This is the reusable core
+    behind :func:`build_tree`; scenarios pass ``ScenarioPosition`` rows through
+    it so a what-if org renders identically to a snapshot.
+    """
     if not emp_rows:
         return []
 
@@ -269,6 +284,30 @@ def _build_node(
     }
 
     return node
+
+
+#: Metric keys that reveal pay / cost and must be hidden from restricted users.
+_PAY_METRIC_KEYS = ("total_labor_cost", "revenue_managed")
+
+
+def redact_pay(tree):
+    """Null out pay/cost metrics in every node, in place.
+
+    Used for the ``restricted`` role so salary and cost figures never reach the
+    browser — not even as aggregates/rollups on the org chart.
+    """
+    if isinstance(tree, list):
+        for node in tree:
+            redact_pay(node)
+    elif isinstance(tree, dict):
+        metrics = tree.get("metrics")
+        if isinstance(metrics, dict):
+            for key in _PAY_METRIC_KEYS:
+                if key in metrics:
+                    metrics[key] = None
+        for child in tree.get("children", []):
+            redact_pay(child)
+    return tree
 
 
 def strip_aggregation(tree):

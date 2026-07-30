@@ -13,8 +13,9 @@ from django.db import IntegrityError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
-from .models import AppPermission, CensusSnapshot, Company, Employee
+from .models import AppPermission, CensusSnapshot, Company, Employee, Scenario, ScenarioPosition
 from .parsers import STANDARD_FIELDS, apply_mapping, auto_map_columns, parse_file
+from .services import scenarios as scenario_svc
 from .validators import validate_rows
 
 User = get_user_model()
@@ -78,6 +79,29 @@ def _all_user_companies(user):
     return Company.objects.filter(id__in=perm_ids, is_active=True)
 
 
+# ---------------------------------------------------------------------------
+# Role helpers (three roles: admin / viewer / restricted)
+# ---------------------------------------------------------------------------
+
+def _perm_for(user, company):
+    """The user's AppPermission for a company (synthetic admin for superadmins)."""
+    if _is_superadmin(user):
+        return AppPermission(user=user, company=company, role="admin", is_active=True)
+    return AppPermission.objects.filter(user=user, company=company, is_active=True).first()
+
+
+def _can_edit(user, company):
+    """True if the user may make structural changes (admin / superadmin)."""
+    perm = _perm_for(user, company)
+    return bool(perm) and perm.role in AppPermission.EDIT_ROLES
+
+
+def _can_see_pay(user, company):
+    """False only for the 'restricted' role — pay/cost is hidden from them."""
+    perm = _perm_for(user, company)
+    return bool(perm) and perm.role in AppPermission.PAY_ROLES
+
+
 @app_access_required("org-view")
 def index(request):
     from django.utils import timezone as tz
@@ -108,6 +132,7 @@ def index(request):
 
         metrics = None
         is_stale = False
+        see_pay = _can_see_pay(request.user, co)
         if latest:
             tree = build_tree(latest.id)
             tree = strip_aggregation(tree)
@@ -115,6 +140,8 @@ def index(request):
                 metrics = tree.get("metrics")
             elif isinstance(tree, list) and tree:
                 metrics = tree[0].get("metrics")
+            if metrics and not see_pay:
+                metrics = {**metrics, "total_labor_cost": None, "revenue_managed": None}
             eff = latest.effective_date or latest.upload_date.date()
             is_stale = eff < stale_cutoff
 
@@ -124,6 +151,7 @@ def index(request):
             "latest": latest,
             "metrics": metrics,
             "is_stale": is_stale,
+            "can_see_pay": see_pay,
         })
 
     return render(request, "org_view/index.html", {
@@ -163,6 +191,9 @@ def company_detail(request, slug):
         "company": company,
         "snapshot": snap,
         "snapshots": snapshots,
+        "can_edit": _can_edit(request.user, company),
+        "can_see_pay": _can_see_pay(request.user, company),
+        "scenario_count": Scenario.objects.filter(company=company).count(),
         "snapshots_json": json.dumps([
             {
                 "id": s.id,
@@ -794,3 +825,213 @@ def download_template(request):
     writer.writerow([r[1] for r in TEMPLATE_DATA])
     writer.writerow([r[2] for r in TEMPLATE_DATA])
     return response
+
+
+# ---------------------------------------------------------------------------
+# Scenario planning (cleanup + design)
+# ---------------------------------------------------------------------------
+
+def _company_access(request, slug):
+    """(company, None) if the user can access it, else (None, redirect)."""
+    company = get_object_or_404(Company, slug=slug, is_active=True)
+    if not _perm_for(request.user, company):
+        messages.error(request, "You don't have access to that company.")
+        return None, redirect("org_view:index")
+    return company, None
+
+
+def _scenario_field_payload(request):
+    """Pull EDITABLE_FIELDS from POST, coercing pay fields to Decimal/None."""
+    out = {}
+    for f in scenario_svc.EDITABLE_FIELDS:
+        if f in request.POST:
+            val = request.POST.get(f, "").strip()
+            out[f] = _decimal(val) if f in ("annual_salary", "fully_loaded_cost") else val
+    return out
+
+
+@app_access_required("org-view")
+def scenario_list(request, slug):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    scenarios = (
+        Scenario.objects.filter(company=company)
+        .select_related("base_snapshot", "created_by")
+    )
+    snapshots = (
+        CensusSnapshot.objects.filter(company=company, status=CensusSnapshot.Status.ACTIVE)
+        .order_by("-effective_date", "-upload_date")
+    )
+    return render(request, "org_view/scenario_list.html", {
+        "company": company,
+        "scenarios": scenarios,
+        "snapshots": snapshots,
+        "can_edit": _can_edit(request.user, company),
+    })
+
+
+@app_access_required("org-view")
+def scenario_create(request, slug):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    if not _can_edit(request.user, company):
+        messages.error(request, "You need admin access to create a scenario.")
+        return redirect("org_view:scenario_list", slug=slug)
+    if request.method != "POST":
+        return redirect("org_view:scenario_list", slug=slug)
+
+    base = CensusSnapshot.objects.filter(
+        id=request.POST.get("base_snapshot_id"), company=company,
+        status=CensusSnapshot.Status.ACTIVE,
+    ).first()
+    if not base:
+        base = (
+            CensusSnapshot.objects.filter(
+                company=company, status=CensusSnapshot.Status.ACTIVE, is_current=True,
+            ).first()
+            or CensusSnapshot.objects.filter(
+                company=company, status=CensusSnapshot.Status.ACTIVE,
+            ).order_by("-effective_date", "-upload_date").first()
+        )
+    if not base:
+        messages.error(request, "This company has no saved census to base a scenario on.")
+        return redirect("org_view:scenario_list", slug=slug)
+
+    scenario = scenario_svc.create_scenario(
+        company=company, base_snapshot=base,
+        name=request.POST.get("name", "").strip() or "Untitled scenario",
+        description=request.POST.get("description", "").strip(),
+        user=request.user,
+    )
+    messages.success(
+        request, f"Scenario '{scenario.name}' created from {base.employee_count} positions.")
+    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+
+
+@app_access_required("org-view")
+def scenario_detail(request, slug, scenario_id):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
+
+    ct = ScenarioPosition.ChangeType
+    positions = list(scenario.positions.exclude(change_type=ct.REMOVED))
+    positions.sort(key=lambda p: (p.last_name or "", p.first_name or "", p.job_title or ""))
+    managers = [
+        {"id": p.employee_id, "label": (f"{p.full_name} — {p.job_title}").strip(" —")}
+        for p in positions
+    ]
+
+    # Flatten the scenario tree into indented rows for a read-only structure view.
+    pos_by_id = {p.employee_id: p for p in positions}
+    tree = scenario_svc.build_scenario_tree(scenario)
+    tree_rows = []
+
+    def _flatten(node, depth):
+        p = pos_by_id.get(node["employee_id"])
+        tree_rows.append({
+            "depth": depth,
+            "full_name": node["full_name"],
+            "job_title": node.get("job_title", ""),
+            "headcount": node.get("metrics", {}).get("headcount"),
+            "change_type": p.change_type if p else ct.UNCHANGED,
+            "is_vacant": p.is_vacant if p else False,
+        })
+        for ch in node.get("children", []):
+            _flatten(ch, depth + 1)
+
+    roots = tree if isinstance(tree, list) else ([tree] if tree else [])
+    for r in roots:
+        _flatten(r, 0)
+
+    return render(request, "org_view/scenario_detail.html", {
+        "company": company,
+        "scenario": scenario,
+        "summary": scenario_svc.scenario_summary(scenario),
+        "positions": positions,
+        "managers": managers,
+        "tree_rows": tree_rows,
+        "can_edit": _can_edit(request.user, company),
+        "can_see_pay": _can_see_pay(request.user, company),
+    })
+
+
+@app_access_required("org-view")
+def scenario_action(request, slug, scenario_id):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
+    if not _can_edit(request.user, company):
+        messages.error(request, "You need admin access to edit a scenario.")
+        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+    if request.method != "POST":
+        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+
+    action = request.POST.get("action", "")
+    ct = ScenarioPosition.ChangeType
+
+    try:
+        if action == "rename":
+            scenario.name = request.POST.get("name", scenario.name).strip() or scenario.name
+            scenario.description = request.POST.get("description", scenario.description).strip()
+            scenario.save(update_fields=["name", "description", "updated_at"])
+            messages.success(request, "Scenario details updated.")
+
+        elif action == "add_position":
+            pos = scenario_svc.add_position(
+                scenario,
+                supervisor_id=request.POST.get("raw_supervisor_id") or None,
+                is_vacant=request.POST.get("is_vacant") == "on",
+                note=request.POST.get("note", "").strip(),
+                **_scenario_field_payload(request),
+            )
+            messages.success(request, f"Added position: {pos.full_name}.")
+
+        elif action in ("save_position", "eliminate", "reassign"):
+            pos = get_object_or_404(
+                ScenarioPosition, id=request.POST.get("position_id"), scenario=scenario)
+            if action == "eliminate":
+                name = pos.full_name
+                scenario_svc.eliminate_position(pos)
+                messages.success(request, f"Eliminated {name}.")
+            elif action == "reassign":
+                scenario_svc.reassign_manager(pos, request.POST.get("raw_supervisor_id") or None)
+                messages.success(request, "Manager reassigned.")
+            else:  # save_position — attributes (+ optional manager change)
+                new_sup = request.POST.get("raw_supervisor_id")
+                if new_sup is not None and (new_sup or None) != (pos.raw_supervisor_id or None):
+                    scenario_svc.reassign_manager(pos, new_sup or None)
+                    pos.refresh_from_db()
+                changes = _scenario_field_payload(request)
+                changes["is_vacant"] = request.POST.get("is_vacant") == "on"
+                changes["note"] = request.POST.get("note", "").strip()
+                scenario_svc.edit_position(pos, changes)
+                messages.success(request, f"Updated {pos.full_name}.")
+        else:
+            messages.error(request, "Unknown action.")
+    except ValueError as exc:
+        messages.error(request, str(exc))
+
+    scenario.save(update_fields=["updated_at"])
+    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+
+
+@app_access_required("org-view")
+def scenario_delete(request, slug, scenario_id):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
+    if not _can_edit(request.user, company):
+        messages.error(request, "You need admin access to delete a scenario.")
+        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+    if request.method == "POST":
+        name = scenario.name
+        scenario.delete()
+        messages.success(request, f"Scenario '{name}' deleted.")
+        return redirect("org_view:scenario_list", slug=slug)
+    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)

@@ -13,8 +13,9 @@ from django.views.decorators.http import require_GET, require_POST
 
 from accounts.decorators import app_access_required
 
-from .models import AppPermission, CensusSnapshot, Company, Employee
-from .services.tree_builder import build_tree, get_employee_path, strip_aggregation
+from .models import AppPermission, CensusSnapshot, Company, Employee, Scenario
+from .services.tree_builder import build_tree, get_employee_path, redact_pay, strip_aggregation
+from .services.scenarios import build_scenario_tree
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,11 @@ def _get_user_permission(user, company):
         .filter(user=user, company=company, is_active=True)
         .first()
     )
+
+
+def _can_see_pay(perm):
+    """Restricted role hides pay/cost everywhere; everyone else sees it."""
+    return bool(perm) and perm.role in AppPermission.PAY_ROLES
 
 
 def _user_companies(user):
@@ -90,6 +96,7 @@ def api_companies(request):
     companies = _user_companies(request.user)
     result = []
     for co in companies:
+        perm = _get_user_permission(request.user, co)
         snap = _active_snapshot(co)
         latest = None
         summary = None
@@ -105,6 +112,8 @@ def api_companies(request):
             # Build root-level summary metrics
             tree = build_tree(snap.id)
             tree = strip_aggregation(tree)
+            if not _can_see_pay(perm):
+                tree = redact_pay(tree)
             if isinstance(tree, dict):
                 summary = tree.get("metrics")
             elif isinstance(tree, list) and tree:
@@ -163,6 +172,8 @@ def api_org_tree(request, slug):
 
     tree = build_tree(snap.id, root_employee_id=root_id, max_depth=max_depth)
     tree = strip_aggregation(tree)
+    if not _can_see_pay(perm):
+        tree = redact_pay(tree)
 
     return JsonResponse({
         "snapshot_id":      snap.id,
@@ -170,6 +181,7 @@ def api_org_tree(request, slug):
         "effective_date":   snap.effective_date.isoformat() if snap.effective_date else None,
         "is_current":       snap.is_current,
         "company":          company.name,
+        "can_see_pay":      _can_see_pay(perm),
         "tree":             tree,
     })
 
@@ -275,6 +287,7 @@ def api_trends(request, slug):
     perm = _get_user_permission(request.user, company)
     if not perm:
         return _error("Access denied.", 403)
+    see_pay = _can_see_pay(perm)
 
     snapshots = (
         CensusSnapshot.objects
@@ -320,10 +333,10 @@ def api_trends(request, slug):
                 "num_layers":       m.get("num_layers"),
                 "avg_span":         m.get("avg_span_of_control"),
                 "max_span":         max_span,
-                "total_labor_cost": m.get("total_labor_cost"),
+                "total_labor_cost": m.get("total_labor_cost") if see_pay else None,
                 "overhead_pct":     m.get("overhead_pct"),
                 "manager_count":    manager_count,
-                "avg_salary":       avg_salary,
+                "avg_salary":       avg_salary if see_pay else None,
             },
         })
 
@@ -446,3 +459,40 @@ def api_delete_snapshot(request, slug, pk):
             next_snap.save(update_fields=["is_current"])
 
     return JsonResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# GET /org-view/api/companies/<slug>/scenarios/<int:scenario_id>/org-tree/
+# ---------------------------------------------------------------------------
+
+@require_GET
+@app_access_required("org-view")
+def api_scenario_tree(request, slug, scenario_id):
+    company = Company.objects.filter(slug=slug, is_active=True).first()
+    if not company:
+        return _error("Company not found.", 404)
+
+    perm = _get_user_permission(request.user, company)
+    if not perm:
+        return _error("Access denied.", 403)
+
+    scenario = Scenario.objects.filter(id=scenario_id, company=company).first()
+    if not scenario:
+        return _error("Scenario not found.", 404)
+
+    root_id = request.GET.get("root_employee_id")
+    if perm.branch_root_employee_id:
+        root_id = perm.branch_root_employee_id
+
+    tree = build_scenario_tree(scenario, root_employee_id=root_id)
+    tree = strip_aggregation(tree)
+    if not _can_see_pay(perm):
+        tree = redact_pay(tree)
+
+    return JsonResponse({
+        "scenario_id":   scenario.id,
+        "scenario_name": scenario.name,
+        "company":       company.name,
+        "can_see_pay":   _can_see_pay(perm),
+        "tree":          tree,
+    })

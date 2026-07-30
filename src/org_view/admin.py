@@ -1,6 +1,8 @@
 from django.contrib import admin
 
-from .models import AppPermission, CensusSnapshot, Company, Employee
+from .models import (
+    AppPermission, CensusSnapshot, Company, Employee, Scenario, ScenarioPosition,
+)
 
 
 @admin.register(Company)
@@ -32,3 +34,17 @@ class EmployeeAdmin(admin.ModelAdmin):
 class AppPermissionAdmin(admin.ModelAdmin):
     list_display = ("user", "company", "role", "is_active")
     list_filter  = ("company", "role")
+
+
+@admin.register(Scenario)
+class ScenarioAdmin(admin.ModelAdmin):
+    list_display  = ("name", "company", "base_snapshot", "status", "created_by", "updated_at")
+    list_filter   = ("company", "status")
+    search_fields = ("name",)
+
+
+@admin.register(ScenarioPosition)
+class ScenarioPositionAdmin(admin.ModelAdmin):
+    list_display  = ("full_name", "employee_id", "job_title", "change_type", "is_vacant", "scenario")
+    list_filter   = ("scenario", "change_type", "is_vacant")
+    search_fields = ("first_name", "last_name", "employee_id", "job_title")

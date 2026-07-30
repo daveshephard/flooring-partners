@@ -2,6 +2,7 @@
 {% block title %}{{ company.name }}{% endblock %}
 
 {% block topbar_actions %}
+  <a href="{% url 'org_view:scenario_list' slug=company.slug %}" class="btn btn-secondary btn-sm">Scenarios</a>
   <a href="{% url 'org_view:upload' %}" class="btn btn-primary btn-sm">+ Upload Census</a>
 {% endblock %}
 
@@ -1004,8 +1005,10 @@
     html += '<div class="oc-card-metrics">';
     html += metricCell("Headcount", fmtCount(m.headcount), false, exceeded.headcount);
     html += metricCell("Direct Reports", fmtCount(m.direct_report_count));
-    html += metricCell("Labor Cost", fmtCurrency(m.total_labor_cost), false, exceeded.total_labor_cost);
-    html += metricCell("Revenue", m.revenue_managed != null ? fmtCurrency(m.revenue_managed) : null, true);
+    if (window.CAN_SEE_PAY !== false) {
+      html += metricCell("Labor Cost", fmtCurrency(m.total_labor_cost), false, exceeded.total_labor_cost);
+      html += metricCell("Revenue", m.revenue_managed != null ? fmtCurrency(m.revenue_managed) : null, true);
+    }
     html += metricCell("Avg Span", fmtDecimal(m.avg_span_of_control), false, exceeded.avg_span_of_control);
     html += metricCell("Layers", fmtCount(m.num_layers), false, exceeded.num_layers);
 
@@ -1663,6 +1666,7 @@
       const data = await resp.json();
 
       fullTree = data.tree;
+      window.CAN_SEE_PAY = data.can_see_pay !== false;
       const root = Array.isArray(fullTree) ? fullTree[0] : fullTree;
       viewRoot = root;
       focusPath = [];
