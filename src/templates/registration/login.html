@@ -1,0 +1,341 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Sign in | Flooring Partners Apps</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #21262b;
+            --card-bg: #21262b;
+            --accent: #a49275;
+            --accent-light: #c0b29f;
+            --accent-soft: rgba(164, 146, 117, 0.12);
+            --border: #3c454b;
+            --text-main: #f5f4f1;
+            --text-muted: #9b9d9f;
+            --error: #e07070;
+            --cream: #f5f4f1;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Lato', sans-serif;
+            background: radial-gradient(circle at top left, #2d3338, #21262b 55%, #1a1e22);
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .login-wrapper {
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .card {
+            background: linear-gradient(135deg, rgba(33, 38, 43, 0.95), rgba(26, 30, 34, 0.98));
+            border-radius: 0.5rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 15px 0 rgba(33, 38, 43, 0.2);
+            padding: 2.25rem 2rem 2.4rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            inset: -40%;
+            background: radial-gradient(circle at top, var(--accent-soft), transparent 60%);
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .card-inner {
+            position: relative;
+            z-index: 1;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.18rem 0.75rem;
+            border-radius: 0;
+            background: rgba(164, 146, 117, 0.1);
+            border: 1px solid rgba(164, 146, 117, 0.35);
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: var(--accent-light);
+            margin-bottom: 1rem;
+        }
+
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: 0 0 10px rgba(164, 146, 117, 0.6);
+        }
+
+        h1 {
+            margin: 0 0 0.35rem;
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+
+        .subtitle {
+            margin: 0 0 1.8rem;
+            font-size: 0.88rem;
+            color: var(--text-muted);
+        }
+
+        .field-group {
+            margin-bottom: 1.2rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            margin-bottom: 0.35rem;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.65rem 0.75rem;
+            border-radius: 0.25rem;
+            border: 1px solid var(--border);
+            background-color: rgba(26, 30, 34, 0.7);
+            color: var(--text-main);
+            font-family: 'Lato', sans-serif;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px rgba(164, 146, 117, 0.35);
+            background-color: rgba(26, 30, 34, 0.9);
+        }
+
+        .help-text {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-bottom: 1.3rem;
+        }
+
+        .remember {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .remember input {
+            width: 14px;
+            height: 14px;
+            accent-color: var(--accent);
+        }
+
+        .link-sm {
+            font-size: 0.8rem;
+            color: var(--accent-light);
+            text-decoration: none;
+        }
+
+        .link-sm:hover {
+            text-decoration: underline;
+        }
+
+        .btn-primary {
+            width: 100%;
+            border: none;
+            border-radius: 0;
+            padding: 0.7rem 1rem;
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            background: var(--accent);
+            color: #21262b;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            box-shadow: 0 10px 15px 0 rgba(33, 38, 43, 0.2);
+            transition: transform 0.1s ease, box-shadow 0.1s ease, filter 0.1s ease;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.08);
+            box-shadow: 0 14px 25px rgba(33, 38, 43, 0.35);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+            box-shadow: 0 6px 12px rgba(33, 38, 43, 0.3);
+        }
+
+        .btn-chevron {
+            font-size: 1rem;
+        }
+
+        .footer {
+            margin-top: 0.9rem;
+            font-size: 0.76rem;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .brand {
+            display: block;
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--text-muted);
+            margin-bottom: 0.4rem;
+        }
+
+        .brand span {
+            color: var(--accent-light);
+        }
+
+        .errorlist,
+        .messages {
+            margin-bottom: 0.9rem;
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .errorlist li,
+        .messages li {
+            background: rgba(224, 112, 112, 0.1);
+            border: 1px solid rgba(224, 112, 112, 0.5);
+            color: var(--error);
+            border-radius: 0.25rem;
+            padding: 0.55rem 0.7rem;
+            font-size: 0.8rem;
+        }
+
+        @media (max-width: 480px) {
+            .card {
+                padding: 1.7rem 1.4rem 1.9rem;
+            }
+
+            h1 {
+                font-size: 1.4rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="login-wrapper">
+    <div class="card">
+        <div class="card-inner">
+            <div class="brand">Flooring Partners <span>Apps</span></div>
+
+            <div class="badge">
+                <span class="badge-dot"></span>
+                Internal access
+            </div>
+
+            <h1>Sign in to your workspace</h1>
+            <p class="subtitle">
+                Use your assigned credentials to access dashboards and portfolio tools.
+            </p>
+
+            {% if form.errors %}
+                <ul class="errorlist">
+                    {% for field in form %}
+                        {% for error in field.errors %}
+                            <li>{{ error }}</li>
+                        {% endfor %}
+                    {% endfor %}
+                    {% for error in form.non_field_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if messages %}
+                <ul class="messages">
+                    {% for message in messages %}
+                        <li>{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            <form method="post" action="{% url 'login' %}">
+                {% csrf_token %}
+
+                <div class="field-group">
+                    <label for="{{ form.username.id_for_label }}">Username</label>
+                    {{ form.username }}
+                </div>
+
+                <div class="field-group">
+                    <label for="{{ form.password.id_for_label }}">Password</label>
+                    {{ form.password }}
+                    <p class="help-text">Contact an admin if you need access.</p>
+                </div>
+
+                <div class="row">
+                    <label class="remember">
+                        <input type="checkbox" name="remember" />
+                        <span>Remember this device</span>
+                    </label>
+                </div>
+
+                {% if next %}
+                    <input type="hidden" name="next" value="{{ next }}">
+                {% endif %}
+
+                <button type="submit" class="btn-primary">
+                    Continue
+                    <span class="btn-chevron">&#8594;</span>
+                </button>
+            </form>
+
+            <p class="footer">
+                Flooring Partners Applications.
+            </p>
+        </div>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,380 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Flooring Partners Apps | Hub</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #21262b;
+            --card-bg: #21262b;
+            --border: #3c454b;
+            --accent: #a49275;
+            --accent-light: #c0b29f;
+            --accent-soft: rgba(164, 146, 117, 0.12);
+            --text-main: #f5f4f1;
+            --text-muted: #9b9d9f;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Lato', sans-serif;
+            background: radial-gradient(circle at top left, #2d3338, #21262b 55%, #1a1e22);
+            color: var(--text-main);
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 2rem 1.5rem;
+        }
+
+        .shell {
+            width: 100%;
+            max-width: 1040px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 2rem;
+            gap: 1rem;
+        }
+
+        .brand-block {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .brand-label {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--text-muted);
+        }
+
+        .brand-label span {
+            color: var(--accent-light);
+        }
+
+        .title {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .subtitle {
+            margin: 0.25rem 0 0;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .user-menu {
+            position: relative;
+            font-size: 0.8rem;
+        }
+
+        .user-dropdown {
+            position: relative;
+        }
+
+        .user-dropdown summary {
+            list-style: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.25rem 0.75rem;
+            border: 1px solid rgba(164, 146, 117, 0.5);
+            color: var(--text-muted);
+            user-select: none;
+        }
+
+        .user-dropdown summary::-webkit-details-marker { display: none; }
+
+        .user-dropdown[open] summary {
+            border-color: rgba(164, 146, 117, 0.8);
+            color: var(--text-main);
+        }
+
+        .pill-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: 0 0 8px rgba(164, 146, 117, 0.6);
+            flex-shrink: 0;
+        }
+
+        .dropdown-arrow {
+            font-size: 0.65rem;
+            color: var(--accent);
+            transition: transform 0.15s;
+        }
+
+        .user-dropdown[open] .dropdown-arrow {
+            transform: rotate(180deg);
+        }
+
+        .dropdown-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 4px);
+            min-width: 160px;
+            background: #1e2428;
+            border: 1px solid var(--border);
+            border-radius: 0.3rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            z-index: 100;
+            overflow: hidden;
+        }
+
+        .dropdown-item {
+            display: block;
+            padding: 0.6rem 1rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background 0.12s, color 0.12s;
+        }
+
+        .dropdown-item:hover {
+            background: rgba(164, 146, 117, 0.1);
+            color: var(--text-main);
+        }
+
+        .dropdown-item-logout {
+            border-top: 1px solid var(--border);
+            color: #e07070;
+        }
+
+        .dropdown-item-logout:hover {
+            background: rgba(192, 57, 43, 0.12);
+            color: #e88080;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.3rem;
+            margin-top: 0.5rem;
+        }
+
+        .card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 0.5rem;
+            background: radial-gradient(circle at top left, rgba(164, 146, 117, 0.1), var(--card-bg));
+            border: 1px solid var(--border);
+            padding: 1.3rem 1.3rem 1.4rem;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            box-shadow: 0 10px 15px 0 rgba(33, 38, 43, 0.2);
+            transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            inset: -40%;
+            background: radial-gradient(circle at top, var(--accent-soft), transparent 55%);
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .card-inner {
+            position: relative;
+            z-index: 1;
+        }
+
+        .card-label {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: var(--accent);
+            margin-bottom: 0.3rem;
+            font-weight: 600;
+        }
+
+        .card-title {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin: 0 0 0.3rem;
+        }
+
+        .card-desc {
+            margin: 0 0 0.8rem;
+            font-size: 0.86rem;
+            color: var(--text-muted);
+        }
+
+        .card-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .badge {
+            border-radius: 0;
+            padding: 0.1rem 0.6rem;
+            border: 1px solid rgba(164, 146, 117, 0.4);
+        }
+
+        .cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--accent-light);
+            font-weight: 700;
+        }
+
+        .cta span.icon {
+            font-size: 1rem;
+        }
+
+        .section-block {
+            margin-bottom: 2.8rem;
+        }
+
+        .section-header {
+            border-left: 3px solid var(--accent);
+            padding-left: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 0.15rem;
+            color: var(--text-main);
+            letter-spacing: 0.01em;
+        }
+
+        .section-desc {
+            margin: 0;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        .section-divider {
+            border: none;
+            border-top: 1px solid var(--accent);
+            margin: 0 0 2rem;
+            opacity: 0.3;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(164, 146, 117, 0.6);
+            box-shadow: 0 14px 25px rgba(33, 38, 43, 0.35);
+        }
+
+        .card-muted {
+            opacity: 0.55;
+            cursor: default;
+        }
+
+        .card-muted:hover {
+            transform: none;
+            border-color: var(--border);
+            box-shadow: 0 10px 15px 0 rgba(33, 38, 43, 0.2);
+        }
+
+        .cta-muted {
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 1.4rem 1rem;
+            }
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .user-pills {
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="shell">
+    <header class="header">
+        <div class="brand-block">
+            <div class="brand-label">Flooring Partners <span>Apps</span></div>
+            <h1 class="title">Choose a workspace</h1>
+            <p class="subtitle">
+                Select an application to launch.
+            </p>
+        </div>
+        <div class="user-menu">
+            <details class="user-dropdown">
+                <summary>
+                    <span class="pill-dot"></span>
+                    {{ user.get_username }}
+                    <span class="dropdown-arrow">&#9662;</span>
+                </summary>
+                <div class="dropdown-panel">
+                    {% if is_admin %}
+                    <a href="{% url 'accounts:dashboard' %}" class="dropdown-item">Admin Panel</a>
+                    {% endif %}
+                    <a href="{% url 'logout' %}" class="dropdown-item dropdown-item-logout">Log out</a>
+                </div>
+            </details>
+        </div>
+    </header>
+
+    <main>
+        {% for section in sections %}
+        {% if not forloop.first %}<hr class="section-divider">{% endif %}
+        <div class="section-block">
+            <div class="section-header">
+                <h2 class="section-title">{{ section.title }}</h2>
+                <p class="section-desc">{{ section.description }}</p>
+            </div>
+            <div class="grid">
+                {% for app in section.apps %}
+                    {% url app.url_name as app_url %}
+                    <a href="{{ app_url|default:'#' }}" class="card{% if app.status == 'coming_soon' %} card-muted{% endif %}">
+                        <div class="card-inner">
+                            <div class="card-label">{{ app.get_status_display }}</div>
+                            <h2 class="card-title">{{ app.name }}</h2>
+                            <p class="card-desc">
+                                {{ app.description }}
+                            </p>
+                            <div class="card-meta">
+                                <span class="badge">{{ app.get_status_display }}</span>
+                                <div class="cta{% if app.status == 'coming_soon' %} cta-muted{% endif %}">
+                                    {% if app.status == 'coming_soon' %}Coming soon{% else %}Open workspace{% endif %}
+                                    <span class="icon">&#8594;</span>
+                                </div>
+                            </div>
+                        </div>
+                    </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </main>
+</div>
+</body>
+</html>

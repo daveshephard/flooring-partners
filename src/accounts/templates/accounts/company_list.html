@@ -1,0 +1,47 @@
+{% extends "accounts/base_admin.html" %}
+{% block title %}Companies{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Companies</h1>
+    <a href="{% url 'accounts:company_add' %}" class="btn btn-primary">+ Add Company</a>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Available Apps</th>
+                <th>Members</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in companies %}
+            <tr>
+                <td>{{ c.name }}</td>
+                <td>
+                    {% for app in c.available_apps.all %}
+                    <span class="badge badge-user" style="margin-right:0.25rem;">{{ app.name }}</span>
+                    {% empty %}—{% endfor %}
+                </td>
+                <td>{{ c.members.count }}</td>
+                <td>
+                    {% if c.is_active %}
+                    <span class="badge badge-active">Active</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{% url 'accounts:company_edit' c.pk %}" class="btn btn-secondary btn-sm">Edit</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" style="color:var(--text-muted);text-align:center;padding:1.5rem;">No companies yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

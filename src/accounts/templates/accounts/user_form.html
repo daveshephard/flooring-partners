@@ -1,0 +1,80 @@
+{% extends "accounts/base_admin.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    <a href="{% url 'accounts:user_list' %}" class="btn btn-secondary">&#8592; Back to Users</a>
+</div>
+
+<div class="card" style="max-width:640px;">
+    <form method="post">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+        <div class="alert alert-error">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        {% if mode == "add" %}
+        <div class="field">
+            <label for="{{ form.username.id_for_label }}">Username</label>
+            {{ form.username }}
+            {% if form.username.errors %}<ul class="errorlist">{% for e in form.username.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+        </div>
+        <div class="field">
+            <label for="{{ form.password.id_for_label }}">Password</label>
+            {{ form.password }}
+        </div>
+        {% endif %}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            <div class="field">
+                <label for="{{ form.first_name.id_for_label }}">First Name</label>
+                {{ form.first_name }}
+            </div>
+            <div class="field">
+                <label for="{{ form.last_name.id_for_label }}">Last Name</label>
+                {{ form.last_name }}
+            </div>
+        </div>
+
+        <div class="field">
+            <label for="{{ form.email.id_for_label }}">Email</label>
+            {{ form.email }}
+        </div>
+
+        <div class="field">
+            <label for="{{ form.company.id_for_label }}">Company</label>
+            {{ form.company }}
+            {% if form.company.errors %}<ul class="errorlist">{% for e in form.company.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+        </div>
+
+        <div class="field">
+            <label for="{{ form.role.id_for_label }}">Role</label>
+            {{ form.role }}
+        </div>
+
+        <div class="field">
+            <label>Assigned Apps</label>
+            <div class="checkbox-group">
+                {{ form.assigned_apps }}
+            </div>
+            {% if form.assigned_apps.errors %}<ul class="errorlist">{% for e in form.assigned_apps.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+        </div>
+
+        {% if mode == "edit" %}
+        <div class="field">
+            <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;letter-spacing:0;font-size:0.875rem;font-weight:400;cursor:pointer;">
+                {{ form.is_active }} Active account
+            </label>
+        </div>
+        {% endif %}
+
+        <div style="display:flex;gap:0.75rem;margin-top:1.5rem;">
+            <button type="submit" class="btn btn-primary">
+                {% if mode == "add" %}Create User{% else %}Save Changes{% endif %}
+            </button>
+            <a href="{% url 'accounts:user_list' %}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

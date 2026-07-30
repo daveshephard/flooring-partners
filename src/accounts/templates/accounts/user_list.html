@@ -1,0 +1,65 @@
+{% extends "accounts/base_admin.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Users</h1>
+    <a href="{% url 'accounts:user_add' %}" class="btn btn-primary">+ Add User</a>
+</div>
+
+<form method="get" class="filter-bar">
+    {% if profile.role == "superadmin" %}
+    <select name="company" onchange="this.form.submit()">
+        <option value="">All Companies</option>
+        {% for c in companies %}
+        <option value="{{ c.pk }}" {% if selected_company == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
+    <select name="role" onchange="this.form.submit()">
+        <option value="">All Roles</option>
+        {% for value, label in roles %}
+        <option value="{{ value }}" {% if selected_role == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+</form>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Company</th>
+                <th>Role</th>
+                <th>Apps</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in users %}
+            <tr>
+                <td>{{ u.user.get_full_name|default:u.user.username }}</td>
+                <td>{{ u.user.email|default:"—" }}</td>
+                <td>{{ u.company.name }}</td>
+                <td><span class="badge badge-{{ u.role }}">{{ u.get_role_display }}</span></td>
+                <td>{{ u.assigned_apps.count }}</td>
+                <td>
+                    {% if u.is_active %}
+                    <span class="badge badge-active">Active</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td style="white-space:nowrap;">
+                    <a href="{% url 'accounts:user_edit' u.pk %}" class="btn btn-secondary btn-sm">Edit</a>
+                    <a href="{% url 'accounts:user_reset_password' u.pk %}" class="btn btn-secondary btn-sm" style="margin-left:0.3rem;">Reset PW</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="8" style="color:var(--text-muted);text-align:center;padding:1.5rem;">No users found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

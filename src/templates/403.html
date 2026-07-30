@@ -1,0 +1,15 @@
+{% extends "errors/_base_error.html" %}
+
+{% block title %}Access denied{% endblock %}
+{% block accent_color %}var(--warning){% endblock %}
+{% block code_color %}var(--warning){% endblock %}
+{% block error_code %}403{% endblock %}
+{% block error_title %}You don't have access to this page{% endblock %}
+{% block error_body %}
+  Your account doesn't have permission to view this resource.
+  If you think this is a mistake, check that you're signed in to the right account.
+{% endblock %}
+{% block error_actions %}
+  <a href="{% url 'app_hub' %}" class="btn btn-primary">Go to Hub</a>
+  <a href="{% url 'logout' %}" class="btn btn-secondary">Sign out</a>
+{% endblock %}

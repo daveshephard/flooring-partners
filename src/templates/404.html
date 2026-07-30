@@ -1,0 +1,13 @@
+{% extends "errors/_base_error.html" %}
+
+{% block title %}Page not found{% endblock %}
+{% block accent_color %}var(--info){% endblock %}
+{% block code_color %}var(--info){% endblock %}
+{% block error_code %}404{% endblock %}
+{% block error_title %}Page not found{% endblock %}
+{% block error_body %}
+  The page you're looking for doesn't exist or has moved.
+  {% if request.path %}
+    <br><br><code>{{ request.path }}</code>
+  {% endif %}
+{% endblock %}

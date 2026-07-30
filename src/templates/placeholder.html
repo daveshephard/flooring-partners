@@ -1,0 +1,100 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>{{ app_name }} | Flooring Partners Apps</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #21262b;
+            --border: #3c454b;
+            --accent: #a49275;
+            --accent-light: #c0b29f;
+            --text-main: #f5f4f1;
+            --text-muted: #9b9d9f;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Lato', sans-serif;
+            background: radial-gradient(circle at top left, #2d3338, #21262b 55%, #1a1e22);
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1.5rem;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 480px;
+        }
+
+        .section-label {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        h1 {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin: 0 0 0.75rem;
+        }
+
+        .coming-soon {
+            display: inline-block;
+            border-radius: 0;
+            padding: 0.25rem 1rem;
+            border: 1px solid rgba(164, 146, 117, 0.5);
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent-light);
+            margin-bottom: 1.5rem;
+        }
+
+        .description {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.5;
+            margin-bottom: 2rem;
+        }
+
+        .back-link {
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="section-label">{{ section }}</div>
+        <h1>{{ app_name }}</h1>
+        <div class="coming-soon">Coming Soon</div>
+        <p class="description">
+            This application is currently under development.
+        </p>
+        <a href="{% url 'app_hub' %}" class="back-link">&#8592; Back to App Hub</a>
+    </div>
+</body>
+</html>

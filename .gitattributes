@@ -1,0 +1,26 @@
+# Always use LF for shell scripts and Dockerfiles — CRLF breaks them in
+# Linux containers (the bash shebang line picks up a \r and the interpreter
+# is not found at runtime).
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Dockerfile.* text eol=lf
+
+# Python and config files: also LF, for consistency with Linux containers.
+*.py        text eol=lf
+*.txt       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+
+# Treat known binaries as binary so git doesn't try to convert them.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.pdf       binary
+*.docx      binary
+*.xlsx      binary
+*.pptx      binary
+*.sqlite3   binary

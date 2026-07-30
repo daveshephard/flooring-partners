@@ -1,0 +1,140 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block title %}Error{% endblock %} | Flooring Partners Apps</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #21262b;
+      --card-bg: #21262b;
+      --border: #3c454b;
+      --accent: #a49275;
+      --accent-light: #c0b29f;
+      --accent-soft: rgba(164, 146, 117, 0.12);
+      --text-main: #f5f4f1;
+      --text-muted: #9b9d9f;
+      --danger: #e07070;
+      --warning: #daba7e;
+      --info: #7eb8da;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Lato', sans-serif;
+      background: radial-gradient(circle at top left, #2d3338, #21262b 55%, #1a1e22);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+    }
+    .error-card {
+      width: 100%;
+      max-width: 540px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    .error-code {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 5rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--accent);
+      margin: 0 0 0.5rem;
+      letter-spacing: -0.02em;
+    }
+    .error-title {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin: 0 0 1rem;
+    }
+    .error-body {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+      margin: 0 0 2rem;
+    }
+    .error-body code {
+      background: rgba(0,0,0,0.3);
+      color: var(--accent-light);
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .error-actions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block;
+      padding: 0.65rem 1.5rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s, transform 0.08s ease;
+    }
+    .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary { background: var(--accent); color: #1a1e22; }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
+    .accent-bar {
+      width: 60px;
+      height: 3px;
+      background: var(--accent);
+      margin: 0 auto 1.25rem;
+      border-radius: 2px;
+    }
+    .brand {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 1.5rem;
+    }
+    .brand span { color: var(--accent); }
+    @media (max-width: 600px) {
+      .error-code { font-size: 4rem; }
+      .error-title { font-size: 1.15rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="error-card">
+    <div class="brand">Flooring Partners <span>Apps</span></div>
+    <div class="accent-bar" style="background: {% block accent_color %}var(--accent){% endblock %};"></div>
+    <div class="error-code" style="color: {% block code_color %}var(--accent){% endblock %};">
+      {% block error_code %}{% endblock %}
+    </div>
+    <h1 class="error-title">{% block error_title %}Something went wrong{% endblock %}</h1>
+    <p class="error-body">{% block error_body %}An unexpected error occurred.{% endblock %}</p>
+    <div class="error-actions">
+      {% block error_actions %}
+        <a href="{% url 'app_hub' %}" class="btn btn-primary">Go to Hub</a>
+        <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+      {% endblock %}
+    </div>
+  </div>
+</body>
+</html>

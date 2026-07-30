@@ -1,0 +1,383 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>{% block title %}Admin Panel{% endblock %} | Flooring Partners Apps</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #21262b;
+            --card-bg: #2a3038;
+            --border: #3c454b;
+            --accent: #a49275;
+            --accent-light: #c0b29f;
+            --accent-soft: rgba(164, 146, 117, 0.12);
+            --text-main: #f5f4f1;
+            --text-muted: #9b9d9f;
+            --danger: #c0392b;
+            --success: #27ae60;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Lato', sans-serif;
+            background: radial-gradient(circle at top left, #2d3338, #21262b 55%, #1a1e22);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+        }
+        nav {
+            background: rgba(26, 30, 34, 0.9);
+            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+        .nav-brand {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--accent-light);
+            text-decoration: none;
+        }
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+        }
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .nav-links a:hover, .nav-links a.active {
+            color: var(--accent-light);
+        }
+        .nav-hub-link {
+            color: var(--accent-light) !important;
+            border-right: 1px solid var(--border);
+            padding-right: 1.5rem;
+            margin-right: 0.25rem;
+        }
+        .nav-user {
+            position: relative;
+            font-size: 0.8rem;
+        }
+
+        .nav-user details summary {
+            list-style: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.2rem 0.6rem;
+            border: 1px solid rgba(164, 146, 117, 0.35);
+            color: var(--text-muted);
+            user-select: none;
+            border-radius: 0.2rem;
+        }
+
+        .nav-user details summary::-webkit-details-marker { display: none; }
+
+        .nav-user details[open] summary {
+            border-color: rgba(164, 146, 117, 0.7);
+            color: var(--text-main);
+        }
+
+        .nav-dropdown-arrow {
+            font-size: 0.6rem;
+            color: var(--accent);
+            transition: transform 0.15s;
+        }
+
+        .nav-user details[open] .nav-dropdown-arrow {
+            transform: rotate(180deg);
+        }
+
+        .nav-dropdown-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 6px);
+            min-width: 150px;
+            background: #1e2428;
+            border: 1px solid var(--border);
+            border-radius: 0.3rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            z-index: 100;
+            overflow: hidden;
+        }
+
+        .nav-dropdown-item {
+            display: block;
+            padding: 0.55rem 0.9rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: background 0.12s, color 0.12s;
+        }
+
+        .nav-dropdown-item:hover {
+            background: rgba(164, 146, 117, 0.1);
+            color: var(--text-main);
+        }
+
+        .nav-dropdown-item-logout {
+            border-top: 1px solid var(--border);
+            color: #e07070;
+        }
+
+        .nav-dropdown-item-logout:hover {
+            background: rgba(192, 57, 43, 0.12);
+            color: #e88080;
+        }
+        .main-content {
+            flex: 1;
+            padding: 2rem;
+            max-width: 1100px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            gap: 1rem;
+        }
+        .page-title {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin: 0;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.45rem 1.1rem;
+            border-radius: 0.3rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            border: none;
+            transition: opacity 0.15s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn-primary {
+            background: var(--accent);
+            color: #1a1e22;
+        }
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+        .btn-sm {
+            padding: 0.3rem 0.75rem;
+            font-size: 0.78rem;
+        }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            padding: 1.25rem;
+            margin-bottom: 1.25rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        thead th {
+            text-align: left;
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-muted);
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+        tbody td {
+            padding: 0.65rem 0.75rem;
+            border-bottom: 1px solid rgba(60, 69, 75, 0.5);
+            vertical-align: middle;
+        }
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover { background: rgba(164, 146, 117, 0.04); }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 0.25rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .badge-superadmin { background: rgba(164, 146, 117, 0.2); color: var(--accent-light); }
+        .badge-company_admin { background: rgba(52, 152, 219, 0.2); color: #5dade2; }
+        .badge-user { background: rgba(60, 69, 75, 0.5); color: var(--text-muted); }
+        .badge-active { background: rgba(39, 174, 96, 0.2); color: #58d68d; }
+        .badge-inactive { background: rgba(192, 57, 43, 0.15); color: #e74c3c; }
+        form .field {
+            margin-bottom: 1rem;
+        }
+        form label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 0.3rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        form input[type=text],
+        form input[type=email],
+        form input[type=password],
+        form select,
+        form textarea {
+            width: 100%;
+            background: #1a1e22;
+            border: 1px solid var(--border);
+            border-radius: 0.3rem;
+            color: var(--text-main);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.9rem;
+            font-family: 'Lato', sans-serif;
+        }
+        form input:focus, form select:focus, form textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .errorlist {
+            list-style: none;
+            padding: 0;
+            margin: 0.3rem 0 0;
+            color: #e74c3c;
+            font-size: 0.8rem;
+        }
+        .messages-box {
+            margin-bottom: 1rem;
+        }
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: 0.3rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .alert-success { background: rgba(39, 174, 96, 0.15); border-left: 3px solid var(--success); }
+        .alert-error { background: rgba(192, 57, 43, 0.15); border-left: 3px solid var(--danger); }
+        .alert-warning { background: rgba(241, 196, 15, 0.15); border-left: 3px solid #f1c40f; }
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-main);
+            text-transform: none;
+            letter-spacing: 0;
+            font-weight: 400;
+            cursor: pointer;
+        }
+        .checkbox-group input[type=checkbox] { width: auto; }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 0.4rem;
+            padding: 1rem 1.25rem;
+        }
+        .stat-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-muted);
+            margin-bottom: 0.3rem;
+        }
+        .stat-value {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--accent-light);
+        }
+        .filter-bar {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        .filter-bar select {
+            background: #1a1e22;
+            border: 1px solid var(--border);
+            border-radius: 0.3rem;
+            color: var(--text-main);
+            padding: 0.35rem 0.65rem;
+            font-size: 0.85rem;
+        }
+        @media (max-width: 640px) {
+            .main-content { padding: 1rem; }
+            nav { padding: 0.75rem 1rem; }
+            .page-header { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+<nav>
+    <a class="nav-brand" href="{% url 'accounts:dashboard' %}">Admin Panel</a>
+    <div class="nav-links">
+        <a href="{% url 'app_hub' %}" class="nav-hub-link">&larr; App Hub</a>
+        <a href="{% url 'accounts:user_list' %}" {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_add' %}class="active"{% endif %}>Users</a>
+        {% if profile.role == "superadmin" %}
+        <a href="{% url 'accounts:company_list' %}" {% if 'company' in request.resolver_match.url_name %}class="active"{% endif %}>Companies</a>
+        {% endif %}
+    </div>
+    <div class="nav-user">
+        <details>
+            <summary>
+                {{ request.user.get_username }}
+                <span class="nav-dropdown-arrow">&#9662;</span>
+            </summary>
+            <div class="nav-dropdown-panel">
+                <a href="{% url 'app_hub' %}" class="nav-dropdown-item">&#8592; App Hub</a>
+                <a href="{% url 'logout' %}" class="nav-dropdown-item nav-dropdown-item-logout">Log out</a>
+            </div>
+        </details>
+    </div>
+</nav>
+
+<div class="main-content">
+    {% if messages %}
+    <div class="messages-box">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+</div>
+</body>
+</html>

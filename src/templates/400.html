@@ -1,0 +1,15 @@
+{% extends "errors/_base_error.html" %}
+
+{% block title %}Bad request{% endblock %}
+{% block accent_color %}var(--warning){% endblock %}
+{% block code_color %}var(--warning){% endblock %}
+{% block error_code %}400{% endblock %}
+{% block error_title %}That request didn't look right{% endblock %}
+{% block error_body %}
+  Something in the request was malformed — possibly a stale form or an
+  expired session token. Reload the page and try again.
+{% endblock %}
+{% block error_actions %}
+  <a href="{% url 'app_hub' %}" class="btn btn-primary">Go to Hub</a>
+  <a href="javascript:window.location.reload()" class="btn btn-secondary">Reload</a>
+{% endblock %}
