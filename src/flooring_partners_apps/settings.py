@@ -46,6 +46,14 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
     "https://flooringpartners.portfolioapps.ai,https://*.railway.app,http://127.0.0.1:8000",
 )
 
+# Railway's internal healthcheck probe always sends Host: healthcheck.railway.app,
+# independent of DJANGO_ALLOWED_HOSTS. It's a platform invariant, not a domain
+# choice, so bake it in — otherwise a trimmed env var 400s the probe and the
+# deploy never goes healthy (CommonMiddleware.get_host() raises DisallowedHost
+# on every path, before the /healthz/ SSL exemption can even apply).
+if "healthcheck.railway.app" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("healthcheck.railway.app")
+
 if DEBUG:
     ALLOWED_HOSTS = ["*"]
 
