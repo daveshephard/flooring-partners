@@ -1,0 +1,342 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block title %}OrgView{% endblock %} | Flooring Partners Apps</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #21262b;
+      --card-bg: #21262b;
+      --border: #3c454b;
+      --accent: #a49275;
+      --accent-light: #c0b29f;
+      --accent-soft: rgba(164, 146, 117, 0.12);
+      --text-main: #f5f4f1;
+      --text-muted: #9b9d9f;
+      --danger: #e07070;
+      --success: #6abf69;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      font-family: 'Lato', sans-serif;
+      background: #1a1e22;
+      color: var(--text-main);
+    }
+
+    /* Top nav */
+    .topbar {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0.65rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .topbar-brand {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--text-muted);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .topbar-brand span { color: var(--accent-light); }
+
+    .topbar-nav {
+      display: flex;
+      gap: 0.2rem;
+    }
+
+    .topbar-nav a {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 0.3rem 0.65rem;
+      border-radius: 0.2rem;
+      transition: color 0.1s, background 0.1s;
+    }
+
+    .topbar-nav a:hover,
+    .topbar-nav a.active {
+      color: var(--text-main);
+      background: rgba(164, 146, 117, 0.1);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.8rem;
+    }
+
+    .topbar-right .user-tag { color: var(--text-muted); }
+
+    .topbar-right a {
+      color: var(--accent-light);
+      text-decoration: none;
+    }
+
+    .topbar-right a.btn-primary { color: #fff; }
+
+    .topbar-right a:hover { text-decoration: underline; }
+
+    /* Main content area */
+    .main {
+      padding: 1.5rem;
+    }
+
+    /* Page header */
+    .page-header { margin-bottom: 1.5rem; }
+
+    .page-header h1 {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .page-header p { color: var(--text-muted); font-size: 0.88rem; }
+
+    .page-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-family: 'Titillium Web', sans-serif;
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      text-decoration: none;
+      padding: 0.5rem 1.1rem;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: transform 0.1s, filter 0.1s;
+    }
+
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+
+    .btn-primary { background: var(--accent); color: #fff; }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+    }
+
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    .btn-danger {
+      background: transparent;
+      border: 1px solid rgba(224, 112, 112, 0.4);
+      color: var(--danger);
+    }
+
+    .btn-danger:hover { background: rgba(224, 112, 112, 0.1); }
+
+    .btn-sm { font-size: 0.72rem; padding: 0.3rem 0.7rem; }
+    .btn-xs { font-size: 0.68rem; padding: 0.2rem 0.5rem; }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1.1rem 1.25rem;
+    }
+
+    /* Forms */
+    .form-group { margin-bottom: 1.1rem; }
+
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 0.25rem;
+      background: rgba(26, 30, 34, 0.7);
+      color: var(--text-main);
+      font-family: 'Lato', sans-serif;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .form-control:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(164, 146, 117, 0.35);
+    }
+
+    textarea.form-control { resize: vertical; min-height: 80px; }
+
+    select.form-control {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239b9d9f' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2rem;
+    }
+
+    .form-actions { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; }
+
+    table { width: 100%; border-collapse: collapse; }
+
+    th {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 0.7rem 0.75rem;
+      border-bottom: 1px solid rgba(60, 69, 75, 0.4);
+      font-size: 0.88rem;
+    }
+
+    tr:hover td { background: rgba(164, 146, 117, 0.04); }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-family: 'Titillium Web', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 0.2rem;
+      font-weight: 600;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+    }
+
+    .empty-state p { margin-bottom: 1rem; }
+
+    /* Breadcrumb */
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .breadcrumb a { color: var(--accent-light); text-decoration: none; }
+    .breadcrumb a:hover { text-decoration: underline; }
+    .breadcrumb .sep { color: var(--border); }
+
+    /* Alert */
+    .alert {
+      padding: 0.75rem 1rem;
+      border-radius: 0.25rem;
+      margin-bottom: 1rem;
+      font-size: 0.88rem;
+    }
+
+    .alert-error   { background: rgba(224,112,112,0.1); border: 1px solid rgba(224,112,112,0.3); color: var(--danger); }
+    .alert-success { background: rgba(106,191,105,0.1); border: 1px solid rgba(106,191,105,0.3); color: var(--success); }
+
+    /* Section heading */
+    .section-heading {
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      .topbar { flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+      .page-header-row { flex-direction: column; }
+    }
+
+    {% block extra_css %}{% endblock %}
+  </style>
+</head>
+<body>
+  <nav class="topbar">
+    <div class="topbar-left">
+      <a href="{% url 'app_hub' %}" class="topbar-brand">Flooring Partners <span>Apps</span></a>
+      <div class="topbar-nav">
+        <a href="{% url 'org_view:index' %}" class="{% block nav_index %}{% endblock %}">Dashboard</a>
+        <a href="{% url 'org_view:upload' %}" class="{% block nav_upload %}{% endblock %}">Upload</a>
+        {% if user.is_staff or user.is_superuser %}
+        <a href="{% url 'org_view:permissions_list' %}" class="{% block nav_admin %}{% endblock %}">Permissions</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="topbar-right">
+      {% block topbar_actions %}{% endblock %}
+      <span class="user-tag">{{ user.get_full_name|default:user.get_username }}</span>
+      <a href="{% url 'logout' %}">Log out</a>
+    </div>
+  </nav>
+
+  <div class="main">
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    {% block content %}{% endblock %}
+  </div>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

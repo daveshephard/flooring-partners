@@ -1,0 +1,200 @@
+{% extends "org_view/base.html" %}
+{% load org_view_tags %}
+
+{% block title %}Column Mapping{% endblock %}
+
+{% block extra_css %}
+.mapping-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.25rem;
+}
+
+.mapping-header h2 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.mapping-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.mapping-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+
+.mapping-table th {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.mapping-table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid rgba(60,69,75,0.3);
+  font-size: 0.85rem;
+}
+
+.mapping-table select {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  background: rgba(26,30,34,0.7);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.cat-heading td {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding-top: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.unmapped select { border-color: var(--danger); }
+
+.preview-section h3 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+
+.preview-wrap { overflow-x: auto; }
+
+.preview-table { border-collapse: collapse; font-size: 0.78rem; white-space: nowrap; }
+
+.preview-table th {
+  background: rgba(164,146,117,0.08);
+  padding: 0.35rem 0.6rem;
+  font-family: 'Titillium Web', sans-serif;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-table td {
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid rgba(60,69,75,0.25);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  <a href="{% url 'org_view:upload' %}">Upload</a>
+  <span class="sep">/</span>
+  Column Mapping
+</div>
+
+<div class="mapping-header">
+  <div>
+    <h2>Map Columns</h2>
+    <p class="mapping-meta">{{ filename }} &mdash; {{ row_count }} row{{ row_count|pluralize }}</p>
+  </div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+
+  <table class="mapping-table">
+    <thead>
+      <tr>
+        <th style="width:28%">Standard Field</th>
+        <th style="width:12%">Category</th>
+        <th style="width:40%">Your Column</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field_name, label, category in standard_fields %}
+        {% ifchanged category %}
+          <tr class="cat-heading">
+            <td colspan="3">
+              {% if category == "required" %}Required
+              {% elif category == "recommended" %}Recommended
+              {% else %}Optional{% endif %}
+            </td>
+          </tr>
+        {% endifchanged %}
+        <tr>
+          <td>{{ label }}</td>
+          <td style="color:var(--text-muted);font-size:0.78rem;">{{ category }}</td>
+          <td>
+            <select name="map_{{ field_name }}" data-field="{{ field_name }}">
+              <option value="">-- Not mapped --</option>
+              {% for h in headers %}
+                <option value="{{ h }}">{{ h }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Confirm Mapping &amp; Validate</button>
+    <a href="{% url 'org_view:upload' %}" class="btn btn-secondary">Back</a>
+  </div>
+</form>
+
+{% if preview_rows %}
+<div class="preview-section" style="margin-top:2rem;">
+  <h3>File Preview (first {{ preview_rows|length }} rows)</h3>
+  <div class="preview-wrap">
+    <table class="preview-table">
+      <thead>
+        <tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for row in preview_rows %}
+        <tr>{% for h in headers %}<td>{% dict_get row h %}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Apply auto-mapping pre-selections
+const autoMapping = JSON.parse('{{ auto_mapping_json|escapejs }}');
+document.querySelectorAll('select[data-field]').forEach(sel => {
+  const field = sel.dataset.field;
+  if (autoMapping[field]) {
+    sel.value = autoMapping[field];
+  }
+  // Highlight required fields that remain unmapped
+  const tr = sel.closest('tr');
+  const catCell = tr && tr.querySelector('td:nth-child(2)');
+  if (catCell && catCell.textContent.trim() === 'required' && !sel.value) {
+    tr.classList.add('unmapped');
+  }
+  sel.addEventListener('change', function() {
+    if (catCell && catCell.textContent.trim() === 'required') {
+      tr.classList.toggle('unmapped', !this.value);
+    }
+  });
+});
+</script>
+{% endblock %}

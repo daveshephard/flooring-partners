@@ -1,0 +1,386 @@
+{% extends "org_view/base.html" %}
+{% block title %}{{ company.name }} — Trends{% endblock %}
+
+{% block extra_css %}
+.tr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+.tr-header h1 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.tr-header p { color: var(--text-muted); font-size: 0.88rem; }
+
+.tr-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.tr-chart-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem;
+}
+
+.tr-chart-card h3 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.tr-chart-card canvas {
+  max-height: 220px;
+}
+
+.tr-chart-full {
+  grid-column: 1 / -1;
+}
+
+/* ── Comparison table ──────────────────────────────────────────────── */
+.tr-compare-section {
+  margin-bottom: 1.5rem;
+}
+
+.tr-compare-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.tr-compare-header label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.tr-compare-header select {
+  background: rgba(26,30,34,0.7);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--text-main);
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  font-family: 'Lato', sans-serif;
+}
+
+.tr-change-up { color: var(--success); }
+.tr-change-down { color: var(--danger); }
+.tr-change-neutral { color: var(--text-muted); }
+
+.tr-empty {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: var(--text-muted);
+}
+
+.tr-empty a { color: var(--accent-light); }
+
+@media (max-width: 768px) {
+  .tr-chart-grid { grid-template-columns: 1fr; }
+  .tr-header { flex-direction: column; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  <a href="{% url 'org_view:company_detail' slug=company.slug %}">{{ company.name }}</a>
+  <span class="sep">/</span>
+  Trends
+</div>
+
+<div class="tr-header">
+  <div>
+    <h1>{{ company.name }} — Trends</h1>
+    <p>Historical metrics across census snapshots.</p>
+  </div>
+  <a href="{% url 'org_view:company_detail' slug=company.slug %}" class="btn btn-secondary btn-sm">&larr; Org Chart</a>
+</div>
+
+{% if snapshot_count < 1 %}
+<div class="tr-empty card">
+  <p>No snapshots available for trend analysis.</p>
+  <a href="{% url 'org_view:upload' %}">Upload a census file</a>
+</div>
+{% elif snapshot_count < 2 %}
+<div class="tr-empty card">
+  <p>At least 2 snapshots are needed for trend analysis. Currently: {{ snapshot_count }} snapshot.</p>
+  <a href="{% url 'org_view:upload' %}">Upload another census file</a>
+</div>
+{% else %}
+
+<!-- Comparison table -->
+<div class="tr-compare-section">
+  <div class="section-heading">Snapshot Comparison</div>
+  <div class="tr-compare-header">
+    <label>From</label>
+    <select id="tr-snap-a">
+      {% for s in snapshots reversed %}
+      <option value="{{ s.id }}" {% if forloop.first %}selected{% endif %}>{{ s.label|default:"Unlabeled" }} — {% if s.effective_date %}{{ s.effective_date|date:"M j, Y" }}{% else %}{{ s.upload_date|date:"M j, Y" }}{% endif %}{% if s.is_current %} ●{% endif %}</option>
+      {% endfor %}
+    </select>
+    <label>To</label>
+    <select id="tr-snap-b">
+      {% for s in snapshots %}
+      <option value="{{ s.id }}" {% if forloop.first %}selected{% endif %}>{{ s.label|default:"Unlabeled" }} — {% if s.effective_date %}{{ s.effective_date|date:"M j, Y" }}{% else %}{{ s.upload_date|date:"M j, Y" }}{% endif %}{% if s.is_current %} ●{% endif %}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table id="tr-compare-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th id="tr-th-a">—</th>
+            <th id="tr-th-b">—</th>
+            <th>Change</th>
+          </tr>
+        </thead>
+        <tbody id="tr-compare-body">
+          <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:1.5rem;">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="tr-chart-grid">
+  <div class="tr-chart-card">
+    <h3>Headcount</h3>
+    <canvas id="chart-headcount"></canvas>
+  </div>
+  <div class="tr-chart-card">
+    <h3>Total Labor Cost</h3>
+    <canvas id="chart-cost"></canvas>
+  </div>
+  <div class="tr-chart-card">
+    <h3>Average Span of Control</h3>
+    <canvas id="chart-span"></canvas>
+  </div>
+  <div class="tr-chart-card">
+    <h3>Org Layers</h3>
+    <canvas id="chart-layers"></canvas>
+  </div>
+  <div class="tr-chart-card tr-chart-full">
+    <h3>Overhead %</h3>
+    <canvas id="chart-overhead"></canvas>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if snapshot_count >= 2 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script>
+(function() {
+  "use strict";
+
+  const SLUG = "{{ company.slug }}";
+  const API  = "/org-view/api/companies/" + SLUG + "/trends/";
+
+  const ACCENT      = "#a49275";
+  const ACCENT_LIGHT = "#c0b29f";
+  const BLUE        = "#5dade2";
+  const GREEN       = "#6abf69";
+  const ORANGE      = "#E8A838";
+  const GRID_COLOR  = "rgba(60,69,75,0.4)";
+  const TEXT_COLOR  = "#9b9d9f";
+
+  let trendsData = [];
+
+  /* ── Chart defaults ──────────────────────────────────────────────── */
+  Chart.register(ChartDataLabels);
+  Chart.defaults.color = TEXT_COLOR;
+  Chart.defaults.font.family = "'Lato', sans-serif";
+  Chart.defaults.font.size = 11;
+
+  function makeChart(canvasId, labels, data, color, labelFormatter) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    return new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          data,
+          borderColor: color,
+          backgroundColor: color + "99",
+          borderWidth: 1,
+          borderRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 20 } },
+        plugins: {
+          legend: { display: false },
+          datalabels: {
+            anchor: "end",
+            align: "top",
+            color: TEXT_COLOR,
+            font: { size: 10, weight: 600 },
+            formatter: labelFormatter || function(v) { return v != null ? v.toLocaleString() : ""; },
+          },
+        },
+        scales: {
+          x: { grid: { color: GRID_COLOR }, ticks: { maxRotation: 45 } },
+          y: { grid: { color: GRID_COLOR }, beginAtZero: true, ticks: labelFormatter ? { callback: labelFormatter } : {} },
+        },
+      },
+    });
+  }
+
+  /* ── Format helpers ──────────────────────────────────────────────── */
+  function fmtCurrency(v) {
+    if (v == null) return "—";
+    if (v >= 1000000) return "$" + (v / 1000000).toFixed(1) + "M";
+    if (v >= 1000) return "$" + Math.round(v / 1000) + "K";
+    return "$" + Math.round(v);
+  }
+
+  function fmtPct(v) { return v != null ? v.toFixed(1) + "%" : "—"; }
+  function fmtDec(v) { return v != null ? v.toFixed(1) : "—"; }
+  function fmtInt(v) { return v != null ? v.toLocaleString() : "—"; }
+  function fmtSalary(v) {
+    if (v == null) return "—";
+    return "$" + (v / 1000).toFixed(2) + "K";
+  }
+  function fmtCurrencyM(v) {
+    if (v == null) return "—";
+    if (Math.abs(v) >= 1000000) return (v < 0 ? "-" : "") + "$" + (Math.abs(v) / 1000000).toFixed(1) + "M";
+    if (Math.abs(v) >= 1000) return (v < 0 ? "-" : "") + "$" + Math.round(Math.abs(v) / 1000) + "K";
+    return "$" + Math.round(v);
+  }
+
+  /* ── Build charts ────────────────────────────────────────────────── */
+  function fmtChartDate(dateStr) {
+    if (!dateStr) return "—";
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  }
+
+  function buildCharts() {
+    const labels = trendsData.map(s => {
+      const dateLabel = fmtChartDate(s.effective_date || s.upload_date);
+      return s.label !== "Unlabeled" ? s.label : dateLabel;
+    });
+
+    makeChart("chart-headcount", labels,
+      trendsData.map(s => s.metrics.headcount), ACCENT,
+      v => v != null ? v.toLocaleString() : "");
+
+    makeChart("chart-cost", labels,
+      trendsData.map(s => s.metrics.total_labor_cost), ACCENT_LIGHT,
+      v => fmtCurrency(v));
+
+    makeChart("chart-span", labels,
+      trendsData.map(s => s.metrics.avg_span), ORANGE,
+      v => v != null ? v.toFixed(1) : "");
+
+    makeChart("chart-layers", labels,
+      trendsData.map(s => s.metrics.num_layers), BLUE,
+      v => v != null ? v.toLocaleString() : "");
+
+    makeChart("chart-overhead", labels,
+      trendsData.map(s => s.metrics.overhead_pct), GREEN,
+      v => v != null ? v.toFixed(1) + "%" : "");
+  }
+
+  /* ── Comparison table ────────────────────────────────────────────── */
+  const $snapA = document.getElementById("tr-snap-a");
+  const $snapB = document.getElementById("tr-snap-b");
+  const $thA   = document.getElementById("tr-th-a");
+  const $thB   = document.getElementById("tr-th-b");
+  const $body  = document.getElementById("tr-compare-body");
+
+  // downGood: true = decrease is green (good), false = increase is green (good)
+  const metricDefs = [
+    { key: "headcount",        label: "Headcount",             fmt: fmtInt,       fmtDiff: fmtInt,       downGood: true },
+    { key: "total_labor_cost", label: "Total Labor Cost",      fmt: fmtCurrency,  fmtDiff: fmtCurrencyM, downGood: true },
+    { key: "avg_span",         label: "Avg Span of Control",   fmt: fmtDec,       fmtDiff: fmtDec,       downGood: false },
+    { key: "max_span",         label: "Max Span",              fmt: fmtInt,       fmtDiff: fmtInt,       downGood: true },
+    { key: "num_layers",       label: "Org Layers",            fmt: fmtInt,       fmtDiff: fmtInt,       downGood: true },
+    { key: "overhead_pct",     label: "Overhead %",            fmt: fmtPct,       fmtDiff: fmtPct,       downGood: true },
+    { key: "manager_count",    label: "Manager Count",         fmt: fmtInt,       fmtDiff: fmtInt,       downGood: true },
+    { key: "avg_salary",       label: "Avg Salary",            fmt: fmtSalary,    fmtDiff: fmtSalary,    downGood: true },
+  ];
+
+  function updateComparison() {
+    const idA = parseInt($snapA.value);
+    const idB = parseInt($snapB.value);
+    const a = trendsData.find(s => s.id === idA);
+    const b = trendsData.find(s => s.id === idB);
+    if (!a || !b) return;
+
+    $thA.textContent = a.label;
+    $thB.textContent = b.label;
+
+    let html = "";
+    for (const def of metricDefs) {
+      const va = a.metrics[def.key];
+      const vb = b.metrics[def.key];
+      let changeHtml = '<span class="tr-change-neutral">—</span>';
+      if (va != null && vb != null) {
+        const diff = vb - va;
+        if (diff !== 0) {
+          const isGood = def.downGood ? (diff < 0) : (diff > 0);
+          const cls = isGood ? "tr-change-up" : "tr-change-down";
+          const arrow = diff > 0 ? "&#9650; +" : "&#9660; ";
+          changeHtml = '<span class="' + cls + '">' + arrow + def.fmtDiff(diff) + '</span>';
+        } else {
+          changeHtml = '<span class="tr-change-neutral">No change</span>';
+        }
+      }
+      html += '<tr><td>' + def.label + '</td><td>' + def.fmt(va) + '</td><td>' + def.fmt(vb) + '</td><td>' + changeHtml + '</td></tr>';
+    }
+    $body.innerHTML = html;
+  }
+
+  if ($snapA) $snapA.addEventListener("change", updateComparison);
+  if ($snapB) $snapB.addEventListener("change", updateComparison);
+
+  /* ── Load data ───────────────────────────────────────────────────── */
+  fetch(API)
+    .then(r => r.json())
+    .then(data => {
+      trendsData = data.snapshots || [];
+      if (trendsData.length >= 2) {
+        buildCharts();
+        updateComparison();
+      }
+    })
+    .catch(err => {
+      console.error("Failed to load trends:", err);
+    });
+
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends "org_view/base.html" %}
+{% block title %}Quick Setup{% endblock %}
+
+{% block extra_css %}
+.qs-wrap {
+  max-width: 700px;
+}
+
+.qs-wrap h1 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.qs-wrap > p {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-bottom: 1.25rem;
+}
+
+.qs-picker {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 1.25rem;
+}
+
+.qs-picker .form-group { flex: 1; margin-bottom: 0; }
+
+.qs-leader {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid rgba(60,69,75,0.4);
+}
+
+.qs-leader:last-child { border-bottom: none; }
+
+.qs-leader input[type="checkbox"] { accent-color: var(--accent); flex-shrink: 0; }
+
+.qs-leader-info { flex: 1; }
+.qs-leader-name { font-weight: 600; font-size: 0.88rem; }
+.qs-leader-meta { font-size: 0.75rem; color: var(--text-muted); }
+.qs-leader-hc { font-size: 0.75rem; color: var(--accent-light); white-space: nowrap; }
+
+.qs-indent-1 { padding-left: 2rem; }
+.qs-indent-2 { padding-left: 3.5rem; }
+
+.qs-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  <a href="{% url 'org_view:permissions_list' %}">Permissions</a>
+  <span class="sep">/</span>
+  Quick Setup
+</div>
+
+<div class="qs-wrap">
+  <h1>Quick Setup</h1>
+  <p>Select a company to see its top leaders. Use the Add Permission form to assign users to each branch.</p>
+
+  <div class="qs-picker">
+    <div class="form-group">
+      <label for="qs-company">Company</label>
+      <select id="qs-company" class="form-control" onchange="location.href='?company_id='+this.value;">
+        <option value="">— Select company —</option>
+        {% for c in companies %}
+        <option value="{{ c.id }}" {% if selected_company and selected_company.id == c.id %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  {% if selected_company %}
+  <div class="card">
+    <div class="section-heading">Top Leaders — {{ selected_company.name }}</div>
+    {% if leaders %}
+      {% for l in leaders %}
+      <div class="qs-leader {% if l.depth == 1 %}qs-indent-1{% elif l.depth == 2 %}qs-indent-2{% endif %}">
+        <div class="qs-leader-info">
+          <div class="qs-leader-name">{{ l.full_name }}</div>
+          <div class="qs-leader-meta">{{ l.job_title }} &middot; {{ l.management_level }}</div>
+        </div>
+        <div class="qs-leader-hc">{{ l.headcount }} people</div>
+        <a href="{% url 'org_view:permission_add' %}?company_id={{ selected_company.id }}&branch_eid={{ l.employee_id }}"
+           class="btn btn-secondary btn-xs">Assign User</a>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="qs-empty">No active snapshot found for this company.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

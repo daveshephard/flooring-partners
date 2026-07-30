@@ -1,0 +1,722 @@
+{% extends "org_view/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block nav_index %}active{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{% url 'org_view:upload' %}" class="btn btn-primary btn-sm">+ Upload Census</a>
+{% endblock %}
+
+{% block extra_css %}
+/* ── Dashboard ─────────────────────────────────────────────────────── */
+.dash-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+.dash-header h1 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.dash-header p { color: var(--text-muted); font-size: 0.88rem; }
+
+.admin-link {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.admin-link:hover {
+  border-color: var(--accent);
+  color: var(--text-main);
+}
+
+/* ── Company rows ──────────────────────────────────────────────────── */
+.co-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.co-row {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+  transition: border-color 0.15s;
+}
+
+.co-row:hover {
+  border-color: var(--accent);
+}
+
+.co-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.co-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.co-row-name {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.co-row-name a {
+  color: var(--text-main);
+  text-decoration: none;
+}
+
+.co-row-name a:hover {
+  color: var(--accent-light);
+}
+
+.stale-badge {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.15rem;
+  background: rgba(230, 81, 0, 0.15);
+  color: #E67E22;
+  white-space: nowrap;
+}
+
+/* Metrics strip */
+.co-row-metrics {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.co-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.co-metric-val {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.co-metric-lbl {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* Actions */
+.co-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  align-items: flex-start;
+}
+
+.co-row-actions a {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-decoration: none;
+  padding: 0.3rem 0.75rem;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 0.15rem;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.co-row-actions a:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-light);
+  color: #fff;
+}
+
+/* Snapshots list */
+.co-snapshots {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+
+.co-snapshots-label {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.snap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.snap-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  padding: 0.2rem 0;
+}
+
+.snap-date {
+  color: var(--text-main);
+  font-weight: 600;
+  min-width: 5.5rem;
+}
+
+.snap-label {
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snap-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.snap-status {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.08rem 0.35rem;
+  border-radius: 0.12rem;
+  font-weight: 600;
+}
+
+.snap-status-active {
+  background: rgba(80,200,120,0.12);
+  color: #50C878;
+}
+
+.snap-status-archived {
+  background: rgba(155,157,159,0.12);
+  color: #9b9d9f;
+}
+
+.snap-link {
+  font-size: 0.72rem;
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+.snap-link:hover {
+  text-decoration: underline;
+}
+
+.snap-active-badge {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.08rem 0.35rem;
+  border-radius: 0.12rem;
+  background: rgba(164,146,117,0.18);
+  color: var(--accent-light);
+}
+
+.snap-set-active, .snap-edit {
+  font-size: 0.68rem;
+  color: var(--text-muted) !important;
+}
+
+.snap-set-active:hover, .snap-edit:hover {
+  color: var(--accent-light) !important;
+}
+
+/* ── Edit modal ────────────────────────────────────────────────────── */
+.snap-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+.snap-modal-overlay.open {
+  display: flex;
+}
+
+.snap-modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  width: 360px;
+  max-width: 90vw;
+}
+
+.snap-modal h3 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.snap-modal .form-group {
+  margin-bottom: 0.9rem;
+}
+
+.snap-modal .form-group label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+.snap-modal .form-group input {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: rgba(26,30,34,0.7);
+  color: var(--text-main);
+  font-family: 'Lato', sans-serif;
+  font-size: 0.88rem;
+  outline: none;
+}
+
+.snap-modal .form-group input:focus {
+  border-color: var(--accent);
+}
+
+.snap-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+
+.snap-modal-actions-left {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.snap-modal-actions-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.1rem;
+}
+
+.btn-danger {
+  background: transparent;
+  color: #e74c3c;
+  border: 1px solid rgba(231,76,60,0.35);
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.btn-danger:hover {
+  background: rgba(231,76,60,0.12);
+  color: #ff6b5a;
+}
+
+.snap-delete-confirm {
+  display: none;
+  background: rgba(231,76,60,0.08);
+  border: 1px solid rgba(231,76,60,0.25);
+  border-radius: 0.35rem;
+  padding: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.snap-delete-confirm p {
+  font-size: 0.82rem;
+  color: #e74c3c;
+  margin-bottom: 0.65rem;
+  line-height: 1.4;
+}
+
+.snap-delete-confirm .btn-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-danger-solid {
+  background: #e74c3c;
+  color: #fff;
+  border: none;
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.btn-danger-solid:hover {
+  background: #c0392b;
+}
+
+.no-snapshots {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+}
+
+/* Empty state */
+.empty-hero {
+  text-align: center;
+  padding: 5rem 1rem;
+}
+
+.empty-hero p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.empty-hero .hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+}
+
+.empty-hero .hint a {
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+.empty-hero .hint a:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+  .co-row-top { flex-direction: column; }
+  .co-row-actions { align-self: flex-start; }
+  .dash-header { flex-direction: column; gap: 0.75rem; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="dash-header">
+  <div>
+    <h1>OrgView</h1>
+    <p>Organizational structure analysis for portfolio companies.</p>
+  </div>
+  {% if is_admin %}
+    <a href="{% url 'accounts:dashboard' %}" class="admin-link">Admin Panel</a>
+  {% endif %}
+</div>
+
+{% if has_companies %}
+<div class="section-heading">Portfolio Companies</div>
+<div class="co-rows">
+  {% for row in rows %}
+  <div class="co-row">
+    <div class="co-row-top">
+      <div class="co-row-info">
+        <div class="co-row-name">
+          {% if row.latest %}
+          <a href="{% url 'org_view:company_detail' slug=row.company.slug %}">{{ row.company.name }}</a>
+          {% else %}
+          {{ row.company.name }}
+          {% endif %}
+          {% if row.is_stale %}
+            <span class="stale-badge">Stale &gt; 90 d</span>
+          {% endif %}
+        </div>
+
+        {% if row.metrics %}
+        <div class="co-row-metrics">
+          <div class="co-metric">
+            <span class="co-metric-val">{{ row.metrics.headcount|default:"—" }}</span>
+            <span class="co-metric-lbl">Headcount</span>
+          </div>
+          <div class="co-metric">
+            <span class="co-metric-val" id="cost-{{ row.company.slug }}">—</span>
+            <span class="co-metric-lbl">Labor Spend</span>
+          </div>
+          <div class="co-metric">
+            <span class="co-metric-val">{{ row.metrics.avg_span_of_control|default:"—" }}</span>
+            <span class="co-metric-lbl">Avg Span</span>
+          </div>
+          <div class="co-metric">
+            <span class="co-metric-val">{{ row.metrics.num_layers|default:"—" }}</span>
+            <span class="co-metric-lbl">Layers</span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="co-row-actions">
+        {% if row.latest %}
+        <a href="{% url 'org_view:company_detail' slug=row.company.slug %}">Org Chart</a>
+        <a href="{% url 'org_view:trends' slug=row.company.slug %}">Trends</a>
+        {% endif %}
+        <a href="{% url 'org_view:upload' %}">Upload Census</a>
+      </div>
+    </div>
+
+    <div class="co-snapshots">
+      <div class="co-snapshots-label">Census Uploads</div>
+      {% if row.snapshots %}
+      <ul class="snap-list">
+        {% for snap in row.snapshots %}
+        <li class="snap-item">
+          <span class="snap-date">{% if snap.effective_date %}{{ snap.effective_date|date:"M j, Y" }}{% else %}{{ snap.upload_date|date:"M j, Y" }}{% endif %}</span>
+          <span class="snap-label">{{ snap.label|default:"Unlabeled" }}</span>
+          <span class="snap-count">{{ snap.employee_count }} employees</span>
+          <span class="snap-status snap-status-{{ snap.status }}">{{ snap.get_status_display }}</span>
+          {% if snap.is_current %}
+          <span class="snap-active-badge">Active</span>
+          {% endif %}
+          {% if snap.status == "active" %}
+          <a href="{% url 'org_view:company_detail' slug=row.company.slug %}?snapshot_id={{ snap.id }}" class="snap-link">View</a>
+          {% if not snap.is_current %}
+          <a href="#" class="snap-link snap-set-active" data-slug="{{ row.company.slug }}" data-pk="{{ snap.id }}">Set Active</a>
+          {% endif %}
+          {% endif %}
+          <a href="#" class="snap-link snap-edit"
+             data-slug="{{ row.company.slug }}"
+             data-pk="{{ snap.id }}"
+             data-label="{{ snap.label }}"
+             data-effective="{{ snap.effective_date|date:'Y-m-d' }}"
+             >Edit</a>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="no-snapshots">No census data uploaded yet.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+{# No companies at all #}
+<div class="empty-hero">
+  <p>You don't have access to any companies yet.</p>
+  {% if is_admin %}
+    <a href="{% url 'accounts:dashboard' %}" class="btn btn-primary">Go to Admin Panel</a>
+    <div class="hint">Assign yourself a company in the admin panel.</div>
+  {% else %}
+    <div class="hint">Contact your administrator to get access.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Edit Snapshot Modal -->
+<div class="snap-modal-overlay" id="snap-edit-overlay">
+  <div class="snap-modal">
+    <h3>Edit Snapshot</h3>
+    <div class="form-group">
+      <label for="snap-edit-label">Snapshot Label</label>
+      <input type="text" id="snap-edit-label" placeholder="e.g. Q4 2025">
+    </div>
+    <div class="form-group">
+      <label for="snap-edit-date">Census Effective Date</label>
+      <input type="date" id="snap-edit-date">
+    </div>
+    <div class="snap-modal-actions-row">
+      <div class="snap-modal-actions-left">
+        <button class="btn btn-primary btn-sm" id="snap-edit-save">Save</button>
+        <button class="btn btn-secondary btn-sm" id="snap-edit-cancel">Cancel</button>
+      </div>
+      <button class="btn-danger" id="snap-delete-btn">Delete</button>
+    </div>
+    <div class="snap-delete-confirm" id="snap-delete-confirm">
+      <p>This will permanently delete this snapshot and all of its employee data. This cannot be undone.</p>
+      <div class="btn-row">
+        <button class="btn-danger-solid" id="snap-delete-yes">Delete Permanently</button>
+        <button class="btn btn-secondary btn-sm" id="snap-delete-no">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+{% for row in rows %}
+{% if row.metrics %}
+(function(){
+  var cost = {{ row.metrics.total_labor_cost|default:"null" }};
+  var el = document.getElementById('cost-{{ row.company.slug }}');
+  if (el && cost !== null) {
+    if (cost >= 1000000) el.textContent = '$' + (cost / 1000000).toFixed(1) + 'M';
+    else if (cost >= 1000) el.textContent = '$' + (cost / 1000).toFixed(0) + 'K';
+    else el.textContent = '$' + cost.toFixed(0);
+  }
+})();
+{% endif %}
+{% endfor %}
+
+// Edit Snapshot modal
+(function() {
+  var overlay  = document.getElementById('snap-edit-overlay');
+  var inLabel  = document.getElementById('snap-edit-label');
+  var inDate   = document.getElementById('snap-edit-date');
+  var btnSave  = document.getElementById('snap-edit-save');
+  var btnCancel = document.getElementById('snap-edit-cancel');
+  var editSlug = '', editPk = '';
+
+  document.querySelectorAll('.snap-edit').forEach(function(link) {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      editSlug = this.dataset.slug;
+      editPk   = this.dataset.pk;
+      inLabel.value = this.dataset.label || '';
+      inDate.value  = this.dataset.effective || '';
+      deleteConfirm.style.display = 'none';
+      overlay.classList.add('open');
+    });
+  });
+
+  var deleteBtn     = document.getElementById('snap-delete-btn');
+  var deleteConfirm = document.getElementById('snap-delete-confirm');
+  var deleteYes     = document.getElementById('snap-delete-yes');
+  var deleteNo      = document.getElementById('snap-delete-no');
+
+  btnCancel.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    deleteConfirm.style.display = 'none';
+  });
+
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) {
+      overlay.classList.remove('open');
+      deleteConfirm.style.display = 'none';
+    }
+  });
+
+  btnSave.addEventListener('click', function() {
+    btnSave.disabled = true;
+    btnSave.textContent = 'Saving...';
+    fetch('/org-view/api/companies/' + editSlug + '/snapshots/' + editPk + '/edit/', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token }}',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        label: inLabel.value.trim(),
+        effective_date: inDate.value,
+      }),
+    }).then(function(r) {
+      if (r.ok) {
+        location.reload();
+      } else {
+        r.json().then(function(d) { alert(d.error || 'Failed to save.'); });
+        btnSave.disabled = false;
+        btnSave.textContent = 'Save';
+      }
+    }).catch(function() {
+      alert('Network error.');
+      btnSave.disabled = false;
+      btnSave.textContent = 'Save';
+    });
+  });
+
+  // Delete flow — show confirmation panel
+  deleteBtn.addEventListener('click', function() {
+    deleteConfirm.style.display = 'block';
+  });
+
+  deleteNo.addEventListener('click', function() {
+    deleteConfirm.style.display = 'none';
+  });
+
+  deleteYes.addEventListener('click', function() {
+    deleteYes.disabled = true;
+    deleteYes.textContent = 'Deleting...';
+    fetch('/org-view/api/companies/' + editSlug + '/snapshots/' + editPk + '/delete/', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token }}',
+        'Content-Type': 'application/json',
+      },
+    }).then(function(r) {
+      if (r.ok) {
+        location.reload();
+      } else {
+        r.json().then(function(d) { alert(d.error || 'Failed to delete.'); });
+        deleteYes.disabled = false;
+        deleteYes.textContent = 'Delete Permanently';
+      }
+    }).catch(function() {
+      alert('Network error.');
+      deleteYes.disabled = false;
+      deleteYes.textContent = 'Delete Permanently';
+    });
+  });
+})();
+
+// Set Active functionality
+document.querySelectorAll('.snap-set-active').forEach(function(link) {
+  link.addEventListener('click', function(e) {
+    e.preventDefault();
+    var slug = this.dataset.slug;
+    var pk = this.dataset.pk;
+    if (!confirm('Set this snapshot as the active snapshot for the org chart?')) return;
+    fetch('/org-view/api/companies/' + slug + '/snapshots/' + pk + '/set-active/', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token }}',
+        'Content-Type': 'application/json',
+      },
+    }).then(function(r) {
+      if (r.ok) location.reload();
+      else r.json().then(function(d) { alert(d.error || 'Failed to update.'); });
+    });
+  });
+});
+</script>
+{% endblock %}

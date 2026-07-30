@@ -1,0 +1,1700 @@
+{% extends "org_view/base.html" %}
+{% block title %}{{ company.name }}{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{% url 'org_view:upload' %}" class="btn btn-primary btn-sm">+ Upload Census</a>
+{% endblock %}
+
+{% block extra_css %}
+/* ── Full-bleed layout ─────────────────────────────────────────────── */
+.main { padding: 0 !important; }
+
+.oc-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 44px);
+  overflow: hidden;
+}
+
+/* ── Toolbar ───────────────────────────────────────────────────────── */
+.oc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.oc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 0;
+  flex: 1;
+}
+
+.oc-breadcrumb a {
+  color: var(--accent-light);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.oc-breadcrumb a:hover { text-decoration: underline; }
+.oc-breadcrumb .sep { color: var(--border); margin: 0 0.1rem; }
+.oc-breadcrumb .current { color: var(--text-main); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+
+.oc-snap-info {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.oc-snap-select {
+  background: rgba(26,30,34,0.7);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text-main);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.4rem;
+  margin-left: 0.3rem;
+}
+
+/* ── Search ────────────────────────────────────────────────────────── */
+.oc-search-wrap {
+  position: relative;
+}
+
+.oc-search {
+  width: 200px;
+  padding: 0.3rem 0.6rem 0.3rem 1.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  background: rgba(26,30,34,0.7);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  font-family: 'Lato', sans-serif;
+  outline: none;
+}
+
+.oc-search:focus { border-color: var(--accent); }
+
+.oc-search-icon {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+
+.oc-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 280px;
+  background: #1e2428;
+  border: 1px solid var(--border);
+  border-radius: 0 0 0.3rem 0.3rem;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 200;
+  display: none;
+}
+
+.oc-search-results.open { display: block; }
+
+.oc-search-results-header {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+}
+
+.oc-search-result {
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  border-bottom: 1px solid rgba(60,69,75,0.3);
+}
+
+.oc-search-result:hover { background: rgba(164,146,117,0.1); }
+
+.oc-search-result .sr-name { color: var(--text-main); font-weight: 600; }
+.oc-search-result .sr-title { color: var(--text-muted); font-size: 0.72rem; }
+.oc-search-result .sr-id { color: var(--accent-light); font-size: 0.66rem; opacity: 0.7; }
+.oc-search-result mark { background: rgba(164,146,117,0.3); color: var(--text-main); border-radius: 1px; }
+
+/* ── Filter buttons ────────────────────────────────────────────────── */
+.oc-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.oc-filter-btn {
+  position: relative;
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.oc-filter-btn:hover { border-color: var(--accent); color: var(--text-main); }
+.oc-filter-btn.active { border-color: var(--accent); color: var(--accent-light); }
+
+.oc-filter-btn .ficon {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.oc-filter-count {
+  font-size: 0.6rem;
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 8px;
+  padding: 0 0.3rem;
+  min-width: 14px;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ── Filter dropdown ───────────────────────────────────────────────── */
+.oc-dropdown-anchor { position: relative; }
+
+.oc-filter-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 200px;
+  max-height: 320px;
+  background: #1e2428;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  z-index: 300;
+  overflow-y: auto;
+  padding: 0.35rem 0;
+}
+
+.oc-filter-dropdown.open { display: block; }
+
+.oc-filter-dropdown label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.oc-filter-dropdown label:hover { background: rgba(164,146,117,0.08); }
+
+.oc-filter-dropdown input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.oc-filter-dropdown .fdd-actions {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.4rem 0.7rem 0.25rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.2rem;
+}
+
+.oc-filter-dropdown .fdd-link {
+  font-size: 0.7rem;
+  color: var(--accent-light);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: 'Lato', sans-serif;
+}
+
+.oc-filter-dropdown .fdd-link:hover { text-decoration: underline; }
+
+/* ── Clear all filters ─────────────────────────────────────────────── */
+.oc-clear-filters {
+  font-size: 0.68rem;
+  color: var(--danger);
+  background: none;
+  border: 1px solid rgba(224,112,112,0.3);
+  border-radius: 0.2rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  font-family: 'Titillium Web', sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  display: none;
+  transition: background 0.12s;
+}
+
+.oc-clear-filters.visible { display: inline-flex; }
+.oc-clear-filters:hover { background: rgba(224,112,112,0.1); }
+
+/* ── Threshold bar ─────────────────────────────────────────────────── */
+.oc-threshold-bar {
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 1rem;
+  background: rgba(26,30,34,0.95);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.oc-threshold-bar.open { display: flex; }
+
+.oc-threshold-bar label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.oc-threshold-bar select,
+.oc-threshold-bar input[type="number"] {
+  background: rgba(26,30,34,0.7);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text-main);
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  font-family: 'Lato', sans-serif;
+  outline: none;
+}
+
+.oc-threshold-bar input[type="number"] { width: 70px; }
+.oc-threshold-bar select:focus,
+.oc-threshold-bar input:focus { border-color: var(--accent); }
+
+.oc-threshold-apply {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 0.2rem;
+  padding: 0.28rem 0.7rem;
+  cursor: pointer;
+}
+
+.oc-threshold-apply:hover { filter: brightness(1.1); }
+
+.oc-threshold-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  line-height: 1;
+  margin-left: auto;
+}
+
+.oc-threshold-close:hover { color: var(--text-main); }
+
+/* ── Filter summary ────────────────────────────────────────────────── */
+.oc-filter-summary {
+  display: none;
+  width: 100%;
+  padding: 0.25rem 1rem;
+  background: rgba(164,146,117,0.06);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.oc-filter-summary.visible { display: block; }
+.oc-filter-summary strong { color: var(--accent-light); font-weight: 600; }
+
+/* ── Zoom controls ─────────────────────────────────────────────────── */
+.oc-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.oc-zoom-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Titillium Web', sans-serif;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.oc-zoom-btn:hover { border-color: var(--accent); color: var(--text-main); }
+
+.oc-zoom-level {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  min-width: 36px;
+  text-align: center;
+  font-family: 'Titillium Web', sans-serif;
+}
+
+/* ── Canvas (pan/zoom area) ────────────────────────────────────────── */
+.oc-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+}
+
+.oc-viewport.grabbing { cursor: grabbing; }
+
+.oc-canvas {
+  transform-origin: 0 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+/* ── SVG connectors ────────────────────────────────────────────────── */
+.oc-connectors {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── Tree layout ───────────────────────────────────────────────────── */
+.oc-tree {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 60px 80px;
+}
+
+.oc-node-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.oc-children {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 40px;
+}
+
+.oc-children.collapsed { display: none; }
+
+/* ── Node card ─────────────────────────────────────────────────────── */
+.oc-card {
+  width: 240px;
+  border: 1px solid #dde1e6;
+  border-radius: 6px;
+  background: #fff;
+  font-family: 'Lato', sans-serif;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s, opacity 0.2s;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.oc-card:hover {
+  border-color: #2E5984;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  transform: translateY(-1px);
+}
+
+.oc-card.threshold {
+  border-color: #E65100;
+  box-shadow: 0 0 8px rgba(230,81,0,0.25);
+}
+
+.oc-card.dimmed {
+  opacity: 0.25;
+  filter: saturate(0.3);
+}
+
+.oc-card.dimmed:hover {
+  opacity: 0.5;
+}
+
+/* Card header */
+.oc-card-header {
+  background: #1B3A5C;
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.oc-card-name {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #fff;
+  line-height: 1.25;
+}
+
+.oc-card-title {
+  font-size: 0.7rem;
+  color: #a8c4dc;
+  margin-top: 0.1rem;
+  line-height: 1.3;
+}
+
+.oc-level-badge {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(255,255,255,0.18);
+  color: #d0e0f0;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.15rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Card metrics grid */
+.oc-card-metrics {
+  padding: 0.5rem 0.7rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem 0.7rem;
+}
+
+.oc-metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.oc-metric-label {
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #888;
+  line-height: 1;
+}
+
+.oc-metric-value {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1B3A5C;
+  line-height: 1.4;
+}
+
+.oc-metric-value.na {
+  font-style: italic;
+  color: #999;
+  font-weight: 400;
+}
+
+.oc-metric-value.threshold-val {
+  color: #E65100;
+  font-weight: 800;
+}
+
+.oc-metric-overhead {
+  grid-column: 1 / -1;
+  border-top: 1px solid #eaecef;
+  padding-top: 0.35rem;
+  margin-top: 0.1rem;
+}
+
+/* Card footer */
+.oc-card-footer {
+  background: #fafbfc;
+  border-top: 1px solid #eaecef;
+  padding: 0.4rem 0.7rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.7rem;
+}
+
+.oc-expand-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #555;
+  cursor: pointer;
+}
+
+.oc-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.6rem;
+}
+
+.oc-chevron.expanded { transform: rotate(90deg); }
+
+.oc-focus-btn {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #2E5984;
+  cursor: pointer;
+  background: none;
+  border: 1px solid #c8d6e0;
+  border-radius: 0.15rem;
+  padding: 0.1rem 0.4rem;
+  transition: background 0.12s, color 0.12s;
+}
+
+.oc-focus-btn:hover {
+  background: #2E5984;
+  color: #fff;
+}
+
+/* Collapse badge */
+.oc-collapse-badge {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.oc-collapse-pill {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #7EB8E0;
+  background: rgba(46,89,132,0.18);
+  border: 1px solid rgba(46,89,132,0.35);
+  border-radius: 10px;
+  padding: 0.1rem 0.55rem;
+  white-space: nowrap;
+}
+
+/* ── Loading & empty states ────────────────────────────────────────── */
+.oc-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 0.75rem;
+  color: var(--text-muted);
+}
+
+.oc-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: oc-spin 0.7s linear infinite;
+}
+
+@keyframes oc-spin { to { transform: rotate(360deg); } }
+
+.oc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 0.75rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.oc-empty a { color: var(--accent-light); }
+
+/* ── Animation ─────────────────────────────────────────────────────── */
+.oc-children .oc-node-group {
+  animation: oc-fade-in 0.2s ease-out;
+}
+
+@keyframes oc-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .oc-toolbar { gap: 0.4rem; }
+  .oc-search { width: 140px; }
+  .oc-filters { flex-wrap: wrap; }
+}
+{% endblock %}
+
+{% block content %}
+{% if not snapshot %}
+<div class="oc-page">
+  <div class="oc-empty" style="height:60vh;">
+    <p>No census data has been uploaded yet for <strong>{{ company.name }}</strong>.</p>
+    <a href="{% url 'org_view:upload' %}" class="btn btn-primary">Upload Census</a>
+    <a href="{% url 'org_view:index' %}" class="btn btn-secondary" style="margin-top:0.25rem;">&larr; Back to Dashboard</a>
+  </div>
+</div>
+{% else %}
+<div class="oc-page" id="oc-page">
+  <!-- Toolbar -->
+  <div class="oc-toolbar">
+    <div class="oc-breadcrumb" id="oc-breadcrumb">
+      <a href="{% url 'org_view:index' %}">Portfolio</a>
+      <span class="sep">/</span>
+      <span class="current">{{ company.name }}</span>
+    </div>
+
+    <div class="oc-search-wrap">
+      <span class="oc-search-icon">&#128269;</span>
+      <input type="text" class="oc-search" id="oc-search" placeholder="Search by name or title..." autocomplete="off" />
+      <div class="oc-search-results" id="oc-search-results"></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="oc-filters" id="oc-filters">
+      <div class="oc-dropdown-anchor">
+        <button class="oc-filter-btn" data-filter="role" title="Filter by management level">
+          <span class="ficon">&#9881;</span> Role Type
+        </button>
+        <div class="oc-filter-dropdown" id="oc-fd-role"></div>
+      </div>
+      <div class="oc-dropdown-anchor">
+        <button class="oc-filter-btn" data-filter="location" title="Filter by state">
+          <span class="ficon">&#9906;</span> Location
+        </button>
+        <div class="oc-filter-dropdown" id="oc-fd-location"></div>
+      </div>
+      <div class="oc-dropdown-anchor">
+        <button class="oc-filter-btn" data-filter="entity" title="Filter by entity">
+          <span class="ficon">&#9632;</span> Entity
+        </button>
+        <div class="oc-filter-dropdown" id="oc-fd-entity"></div>
+      </div>
+      <button class="oc-filter-btn" id="oc-threshold-toggle" title="Highlight thresholds">
+        <span class="ficon">&#9888;</span> Highlight
+      </button>
+      <button class="oc-clear-filters" id="oc-clear-filters">Clear All</button>
+    </div>
+
+    <a href="{% url 'org_view:trends' slug=company.slug %}" class="oc-filter-btn" title="View trends" style="text-decoration:none;">
+      <span class="ficon">&#9650;</span> Trends
+    </a>
+
+    <div class="oc-snap-info">
+      Census: {% if snapshot.effective_date %}{{ snapshot.effective_date|date:"M j, Y" }}{% else %}{{ snapshot.upload_date|date:"M j, Y" }}{% endif %}
+      {% if snapshots.count > 1 %}
+      <select class="oc-snap-select" id="oc-snap-select">
+        {% for s in snapshots %}
+        <option value="{{ s.id }}" {% if s.id == snapshot.id %}selected{% endif %}>
+          {{ s.label|default:"Unlabeled" }} &mdash; {% if s.effective_date %}{{ s.effective_date|date:"M j, Y" }}{% else %}{{ s.upload_date|date:"M j, Y" }}{% endif %}{% if s.is_current %} ● Active{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      {% else %}
+      | {{ snapshot.label|default:"Unlabeled" }}{% if snapshot.is_current %} <span style="color:var(--accent-light);font-size:0.62rem;">● Active</span>{% endif %}
+      {% endif %}
+    </div>
+
+    <div class="oc-zoom-controls">
+      <button class="oc-zoom-btn" id="oc-zoom-out" title="Zoom out">&minus;</button>
+      <span class="oc-zoom-level" id="oc-zoom-level">100%</span>
+      <button class="oc-zoom-btn" id="oc-zoom-in" title="Zoom in">+</button>
+      <button class="oc-zoom-btn" id="oc-zoom-fit" title="Fit to view" style="font-size:0.62rem;width:auto;padding:0 0.4rem;">Fit</button>
+    </div>
+  </div>
+
+  <!-- Threshold bar -->
+  <div class="oc-threshold-bar" id="oc-threshold-bar">
+    <label>Metric</label>
+    <select id="oc-th-metric">
+      <option value="avg_span_of_control">Span of Control</option>
+      <option value="headcount">Headcount</option>
+      <option value="num_layers">Layers</option>
+      <option value="total_labor_cost">Labor Cost</option>
+      <option value="overhead_pct">Overhead %</option>
+    </select>
+    <label>exceeds</label>
+    <input type="number" id="oc-th-value" value="10" min="0" step="1" />
+    <button class="oc-threshold-apply" id="oc-th-apply">Apply</button>
+    <button class="oc-threshold-close" id="oc-th-close" title="Close">&times;</button>
+  </div>
+
+  <!-- Filter summary -->
+  <div class="oc-filter-summary" id="oc-filter-summary"></div>
+
+  <!-- Viewport -->
+  <div class="oc-viewport" id="oc-viewport">
+    <svg class="oc-connectors" id="oc-connectors"></svg>
+    <div class="oc-canvas" id="oc-canvas">
+      <div class="oc-tree" id="oc-tree"></div>
+    </div>
+    <div class="oc-loading" id="oc-loading">
+      <div class="oc-spinner"></div>
+      <span>Loading org chart&hellip;</span>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if snapshot %}
+<script>
+(function() {
+  "use strict";
+
+  /* ── Config ──────────────────────────────────────────────────────── */
+  const SLUG      = "{{ company.slug }}";
+  const API_BASE  = "/org-view/api/companies/" + SLUG;
+  const COMPANY   = "{{ company.name|escapejs }}";
+  const DEFAULT_EXPAND_DEPTH = 1;
+  const MIN_ZOOM  = 0.3;
+  const MAX_ZOOM  = 2.0;
+  const ZOOM_STEP = 0.1;
+
+  /* ── State ───────────────────────────────────────────────────────── */
+  let fullTree    = null;
+  let viewRoot    = null;
+  let focusPath   = [];
+  let zoom        = 1;
+  let panX        = 0;
+  let panY        = 0;
+  let expandedSet = new Set();
+  let snapshotId  = {{ snapshot.id }};
+
+  /* Filter state: each maps a field to a Set of *checked* values.
+     null means "no filter" (all checked). */
+  let filters = { role: null, location: null, entity: null };
+  /* Unique values extracted from tree */
+  let filterValues = { role: [], location: [], entity: [] };
+  /* Custom threshold: { metric, value } or null */
+  let customThreshold = null;
+
+  /* ── DOM refs ────────────────────────────────────────────────────── */
+  const $viewport   = document.getElementById("oc-viewport");
+  const $canvas     = document.getElementById("oc-canvas");
+  const $tree       = document.getElementById("oc-tree");
+  const $svg        = document.getElementById("oc-connectors");
+  const $loading    = document.getElementById("oc-loading");
+  const $breadcrumb = document.getElementById("oc-breadcrumb");
+  const $zoomLevel  = document.getElementById("oc-zoom-level");
+  const $search     = document.getElementById("oc-search");
+  const $searchRes  = document.getElementById("oc-search-results");
+  const $snapSelect = document.getElementById("oc-snap-select");
+  const $clearAll   = document.getElementById("oc-clear-filters");
+  const $thBar      = document.getElementById("oc-threshold-bar");
+  const $thMetric   = document.getElementById("oc-th-metric");
+  const $thValue    = document.getElementById("oc-th-value");
+  const $filterSum  = document.getElementById("oc-filter-summary");
+
+  /* ── Formatting helpers ──────────────────────────────────────────── */
+  function fmtCount(n) {
+    if (n == null) return "\u2014";
+    return n.toLocaleString();
+  }
+
+  function fmtCurrency(n) {
+    if (n == null) return "N/A";
+    if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+    if (n >= 1000) return "$" + (n / 1000).toFixed(0) + "K";
+    return "$" + Math.round(n).toLocaleString();
+  }
+
+  function fmtPct(n) {
+    if (n == null) return "\u2014";
+    return n.toFixed(1) + "%";
+  }
+
+  function fmtDecimal(n) {
+    if (n == null) return "\u2014";
+    return n.toFixed(1);
+  }
+
+  function levelAbbrev(level) {
+    if (!level) return "";
+    const l = level.toUpperCase();
+    const map = {
+      "CEO": "CEO", "C-SUITE": "C", "PRESIDENT": "PRES",
+      "SVP": "SVP", "SENIOR VICE PRESIDENT": "SVP",
+      "VP": "VP", "VICE PRESIDENT": "VP",
+      "DIRECTOR": "DIR", "SENIOR DIRECTOR": "SDIR",
+      "MANAGER": "MGR", "SENIOR MANAGER": "SMGR",
+      "SUPERVISOR": "SUP", "LEAD": "LEAD",
+      "IC": "IC", "INDIVIDUAL CONTRIBUTOR": "IC",
+    };
+    for (const [k, v] of Object.entries(map)) {
+      if (l.includes(k)) return v;
+    }
+    return level.length > 5 ? level.substring(0, 4).toUpperCase() : level.toUpperCase();
+  }
+
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /* ── Threshold check ─────────────────────────────────────────────── */
+  function checkThresholds(metrics) {
+    const exceeded = {};
+    if (!customThreshold) return exceeded;
+    const val = metrics[customThreshold.metric];
+    if (val != null && val > customThreshold.value) {
+      exceeded[customThreshold.metric] = true;
+    }
+    return exceeded;
+  }
+
+  /* ── Filter match check ──────────────────────────────────────────── */
+  function nodeMatchesFilters(node) {
+    if (filters.role) {
+      const v = (node.management_level || "").trim();
+      if (!filters.role.has(v)) return false;
+    }
+    if (filters.location) {
+      const v = (node.state || "").trim();
+      if (!filters.location.has(v)) return false;
+    }
+    if (filters.entity) {
+      const v = (node.entity || "").trim();
+      if (!filters.entity.has(v)) return false;
+    }
+    return true;
+  }
+
+  function anyFilterActive() {
+    return filters.role !== null || filters.location !== null || filters.entity !== null;
+  }
+
+  /* ── Tree traversal helpers ──────────────────────────────────────── */
+  function findNode(tree, employeeId) {
+    if (!tree) return null;
+    const nodes = Array.isArray(tree) ? tree : [tree];
+    for (const node of nodes) {
+      if (node.employee_id === employeeId) return node;
+      if (node.children) {
+        const found = findNode(node.children, employeeId);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function buildPathTo(tree, targetId) {
+    const path = [];
+    function walk(node) {
+      path.push({ employee_id: node.employee_id, full_name: node.full_name });
+      if (node.employee_id === targetId) return true;
+      if (node.children) {
+        for (const ch of node.children) {
+          if (walk(ch)) return true;
+        }
+      }
+      path.pop();
+      return false;
+    }
+    const nodes = Array.isArray(tree) ? tree : [tree];
+    for (const n of nodes) {
+      if (walk(n)) return path;
+    }
+    return [];
+  }
+
+  function subtreeHeadcount(node) {
+    return (node.metrics && node.metrics.headcount) || 1;
+  }
+
+  /* Walk entire tree and collect all nodes into a flat array. */
+  function flattenTree(tree) {
+    const result = [];
+    function walk(node) {
+      result.push(node);
+      if (node.children) node.children.forEach(walk);
+    }
+    const nodes = Array.isArray(tree) ? tree : [tree];
+    nodes.forEach(walk);
+    return result;
+  }
+
+  /* ── Extract unique filter values ────────────────────────────────── */
+  function extractFilterValues() {
+    if (!fullTree) return;
+    const roles = new Set(), locations = new Set(), entities = new Set();
+    const all = flattenTree(fullTree);
+    for (const n of all) {
+      if (n.management_level && n.management_level.trim()) roles.add(n.management_level.trim());
+      if (n.state && n.state.trim()) locations.add(n.state.trim());
+      if (n.entity && n.entity.trim()) entities.add(n.entity.trim());
+    }
+    filterValues.role = [...roles].sort();
+    filterValues.location = [...locations].sort();
+    filterValues.entity = [...entities].sort();
+  }
+
+  /* ── Expand helpers ──────────────────────────────────────────────── */
+  function autoExpand(node, depth) {
+    if (depth <= 0) return;
+    expandedSet.add(node.employee_id);
+    if (node.children) {
+      for (const ch of node.children) autoExpand(ch, depth - 1);
+    }
+  }
+
+  /* ── Render card HTML ────────────────────────────────────────────── */
+  function renderCard(node) {
+    const m = node.metrics || {};
+    const exceeded = checkThresholds(m);
+    const hasThreshold = Object.keys(exceeded).length > 0;
+    const isExpanded = expandedSet.has(node.employee_id);
+    const hasKids = node.children && node.children.length > 0;
+    const isDimmed = anyFilterActive() && !nodeMatchesFilters(node);
+
+    let cls = "oc-card";
+    if (hasThreshold) cls += " threshold";
+    if (isDimmed) cls += " dimmed";
+
+    let html = '<div class="' + cls + '" data-eid="' + node.employee_id + '">';
+
+    // Header
+    html += '<div class="oc-card-header">';
+    html += '<div>';
+    html += '<div class="oc-card-name">' + esc(node.full_name) + '</div>';
+    html += '<div class="oc-card-title">' + esc(node.job_title || "") + '</div>';
+    html += '</div>';
+    if (node.management_level) {
+      html += '<span class="oc-level-badge">' + esc(levelAbbrev(node.management_level)) + '</span>';
+    }
+    html += '</div>';
+
+    // Metrics
+    html += '<div class="oc-card-metrics">';
+    html += metricCell("Headcount", fmtCount(m.headcount), false, exceeded.headcount);
+    html += metricCell("Direct Reports", fmtCount(m.direct_report_count));
+    html += metricCell("Labor Cost", fmtCurrency(m.total_labor_cost), false, exceeded.total_labor_cost);
+    html += metricCell("Revenue", m.revenue_managed != null ? fmtCurrency(m.revenue_managed) : null, true);
+    html += metricCell("Avg Span", fmtDecimal(m.avg_span_of_control), false, exceeded.avg_span_of_control);
+    html += metricCell("Layers", fmtCount(m.num_layers), false, exceeded.num_layers);
+
+    // Overhead % full-width
+    html += '<div class="oc-metric oc-metric-overhead">';
+    html += '<span class="oc-metric-label">Overhead %</span>';
+    html += '<span class="oc-metric-value' + (exceeded.overhead_pct ? ' threshold-val' : '') + '">' + fmtPct(m.overhead_pct) + '</span>';
+    html += '</div>';
+
+    html += '</div>';
+
+    // Footer
+    if (hasKids) {
+      html += '<div class="oc-card-footer">';
+      html += '<span class="oc-expand-toggle" data-eid="' + node.employee_id + '">';
+      html += '<span class="oc-chevron' + (isExpanded ? ' expanded' : '') + '">&#9654;</span> ';
+      html += m.direct_report_count + ' direct report' + (m.direct_report_count !== 1 ? 's' : '');
+      html += '</span>';
+      html += '<button class="oc-focus-btn" data-focus="' + node.employee_id + '">Focus</button>';
+      html += '</div>';
+    } else if (!node.is_leaf && node.child_count > 0) {
+      html += '<div class="oc-card-footer">';
+      html += '<span class="oc-expand-toggle">' + node.child_count + ' reports</span>';
+      html += '<button class="oc-focus-btn" data-focus="' + node.employee_id + '">Focus</button>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+
+    // Collapse badge
+    if (hasKids && !isExpanded) {
+      const count = subtreeHeadcount(node) - 1;
+      if (count > 0) {
+        html += '<div class="oc-collapse-badge"><span class="oc-collapse-pill">' + fmtCount(count) + ' people below</span></div>';
+      }
+    }
+
+    return html;
+  }
+
+  function metricCell(label, value, isRevenue, isThreshold) {
+    let cls = "oc-metric-value";
+    if (isRevenue && value == null) {
+      return '<div class="oc-metric"><span class="oc-metric-label">' + label + '</span><span class="oc-metric-value na">N/A</span></div>';
+    }
+    if (isThreshold) cls += " threshold-val";
+    return '<div class="oc-metric"><span class="oc-metric-label">' + label + '</span><span class="' + cls + '">' + (value || "\u2014") + '</span></div>';
+  }
+
+  /* ── Render tree ─────────────────────────────────────────────────── */
+  function renderTree() {
+    if (!viewRoot) return;
+    $tree.innerHTML = renderNodeGroup(viewRoot);
+    $loading.style.display = "none";
+    requestAnimationFrame(() => {
+      drawConnectors();
+      applyTransform();
+    });
+  }
+
+  function renderNodeGroup(node) {
+    const isExpanded = expandedSet.has(node.employee_id);
+    const hasKids = node.children && node.children.length > 0;
+
+    let html = '<div class="oc-node-group" data-nid="' + node.employee_id + '">';
+    html += renderCard(node);
+
+    if (hasKids) {
+      html += '<div class="oc-children' + (isExpanded ? '' : ' collapsed') + '">';
+      for (const ch of node.children) {
+        html += renderNodeGroup(ch);
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  /* ── SVG Connectors ──────────────────────────────────────────────── */
+  function drawConnectors() {
+    const treeRect = $tree.getBoundingClientRect();
+    $svg.setAttribute("width", treeRect.width);
+    $svg.setAttribute("height", treeRect.height);
+    $svg.style.width = treeRect.width + "px";
+    $svg.style.height = treeRect.height + "px";
+    $svg.style.transformOrigin = "0 0";
+    $svg.style.transform = $canvas.style.transform;
+
+    let paths = "";
+    const groups = $tree.querySelectorAll(".oc-node-group");
+    groups.forEach(group => {
+      const childrenContainer = group.querySelector(":scope > .oc-children");
+      if (!childrenContainer || childrenContainer.classList.contains("collapsed")) return;
+
+      const parentCard = group.querySelector(":scope > .oc-card");
+      if (!parentCard) return;
+
+      const childGroups = childrenContainer.querySelectorAll(":scope > .oc-node-group");
+      if (childGroups.length === 0) return;
+
+      const pRect = parentCard.getBoundingClientRect();
+      const tRef  = $tree.getBoundingClientRect();
+
+      const px = (pRect.left + pRect.width / 2 - tRef.left) / zoom;
+      const py = (pRect.bottom - tRef.top) / zoom;
+
+      const childPoints = [];
+      childGroups.forEach(cg => {
+        const cCard = cg.querySelector(":scope > .oc-card");
+        if (!cCard) return;
+        const cRect = cCard.getBoundingClientRect();
+        childPoints.push({
+          x: (cRect.left + cRect.width / 2 - tRef.left) / zoom,
+          y: (cRect.top - tRef.top) / zoom
+        });
+      });
+
+      if (childPoints.length === 0) return;
+
+      const midY = py + (childPoints[0].y - py) / 2;
+
+      paths += '<path d="M' + px + ' ' + py + ' L' + px + ' ' + midY + '" />';
+
+      if (childPoints.length === 1) {
+        paths += '<path d="M' + px + ' ' + midY + ' L' + childPoints[0].x + ' ' + childPoints[0].y + '" />';
+      } else {
+        const leftX  = Math.min(...childPoints.map(p => p.x));
+        const rightX = Math.max(...childPoints.map(p => p.x));
+        paths += '<path d="M' + leftX + ' ' + midY + ' L' + rightX + ' ' + midY + '" />';
+        childPoints.forEach(cp => {
+          paths += '<path d="M' + cp.x + ' ' + midY + ' L' + cp.x + ' ' + cp.y + '" />';
+        });
+      }
+    });
+
+    $svg.innerHTML = '<g fill="none" stroke="#90a4ae" stroke-width="2">' + paths + '</g>';
+  }
+
+  /* ── Transform ───────────────────────────────────────────────────── */
+  function applyTransform() {
+    const t = "translate(" + panX + "px, " + panY + "px) scale(" + zoom + ")";
+    $canvas.style.transform = t;
+    $svg.style.transform = t;
+    $zoomLevel.textContent = Math.round(zoom * 100) + "%";
+  }
+
+  function centerView() {
+    const vw = $viewport.clientWidth;
+    const tw = $tree.offsetWidth * zoom;
+    panX = Math.max(0, (vw - tw) / 2);
+    panY = 20;
+    applyTransform();
+  }
+
+  /* ── Zoom controls ───────────────────────────────────────────────── */
+  document.getElementById("oc-zoom-in").addEventListener("click", () => {
+    zoom = Math.min(MAX_ZOOM, zoom + ZOOM_STEP);
+    applyTransform();
+    requestAnimationFrame(drawConnectors);
+  });
+
+  document.getElementById("oc-zoom-out").addEventListener("click", () => {
+    zoom = Math.max(MIN_ZOOM, zoom - ZOOM_STEP);
+    applyTransform();
+    requestAnimationFrame(drawConnectors);
+  });
+
+  document.getElementById("oc-zoom-fit").addEventListener("click", () => {
+    zoom = 1;
+    centerView();
+    requestAnimationFrame(drawConnectors);
+  });
+
+  $viewport.addEventListener("wheel", e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom + delta));
+    if (newZoom === zoom) return;
+
+    const rect = $viewport.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const scale = newZoom / zoom;
+    panX = mx - scale * (mx - panX);
+    panY = my - scale * (my - panY);
+    zoom = newZoom;
+
+    applyTransform();
+    requestAnimationFrame(drawConnectors);
+  }, { passive: false });
+
+  /* ── Pan ─────────────────────────────────────────────────────────── */
+  let isPanning = false, panStartX, panStartY;
+
+  $viewport.addEventListener("mousedown", e => {
+    if (e.target.closest(".oc-card") || e.target.closest(".oc-focus-btn")) return;
+    isPanning = true;
+    panStartX = e.clientX - panX;
+    panStartY = e.clientY - panY;
+    $viewport.classList.add("grabbing");
+  });
+
+  window.addEventListener("mousemove", e => {
+    if (!isPanning) return;
+    panX = e.clientX - panStartX;
+    panY = e.clientY - panStartY;
+    applyTransform();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (isPanning) {
+      isPanning = false;
+      $viewport.classList.remove("grabbing");
+      requestAnimationFrame(drawConnectors);
+    }
+  });
+
+  /* ── Click handlers (expand/collapse, focus) ─────────────────────── */
+  $tree.addEventListener("click", e => {
+    const focusBtn = e.target.closest(".oc-focus-btn");
+    if (focusBtn) {
+      e.stopPropagation();
+      focusOnNode(focusBtn.dataset.focus);
+      return;
+    }
+
+    const card = e.target.closest(".oc-card");
+    if (card) {
+      const eid = card.dataset.eid;
+      const node = findNode(viewRoot, eid);
+      if (!node || !node.children || node.children.length === 0) return;
+
+      if (expandedSet.has(eid)) {
+        collapseSubtree(node);
+      } else {
+        expandedSet.add(eid);
+      }
+      renderTree();
+      requestAnimationFrame(centerView);
+    }
+  });
+
+  function collapseSubtree(node) {
+    expandedSet.delete(node.employee_id);
+    if (node.children) {
+      for (const ch of node.children) collapseSubtree(ch);
+    }
+  }
+
+  /* ── Re-root (focus) ─────────────────────────────────────────────── */
+  function focusOnNode(employeeId) {
+    const node = findNode(fullTree, employeeId);
+    if (!node) return;
+    viewRoot = node;
+    focusPath = buildPathTo(fullTree, employeeId);
+    expandedSet.clear();
+    autoExpand(viewRoot, DEFAULT_EXPAND_DEPTH);
+    renderTree();
+    renderBreadcrumb();
+    requestAnimationFrame(centerView);
+  }
+
+  /* ── Breadcrumb ──────────────────────────────────────────────────── */
+  function renderBreadcrumb() {
+    let html = '<a href="{% url "org_view:index" %}">Portfolio</a><span class="sep">/</span>';
+
+    if (focusPath.length === 0) {
+      html += '<span class="current">' + esc(COMPANY) + '</span>';
+    } else {
+      html += '<a href="#" data-bc-reset>' + esc(COMPANY) + '</a>';
+      for (let i = 0; i < focusPath.length; i++) {
+        html += '<span class="sep">/</span>';
+        if (i === focusPath.length - 1) {
+          html += '<span class="current">' + esc(focusPath[i].full_name) + '</span>';
+        } else {
+          html += '<a href="#" data-bc-eid="' + focusPath[i].employee_id + '">' + esc(focusPath[i].full_name) + '</a>';
+        }
+      }
+    }
+
+    $breadcrumb.innerHTML = html;
+  }
+
+  $breadcrumb.addEventListener("click", e => {
+    const a = e.target.closest("a");
+    if (!a) return;
+    e.preventDefault();
+    if (a.hasAttribute("data-bc-reset")) resetToRoot();
+    else if (a.dataset.bcEid) focusOnNode(a.dataset.bcEid);
+  });
+
+  function resetToRoot() {
+    const root = Array.isArray(fullTree) ? fullTree[0] : fullTree;
+    viewRoot = root;
+    focusPath = [];
+    expandedSet.clear();
+    autoExpand(viewRoot, DEFAULT_EXPAND_DEPTH);
+    renderTree();
+    renderBreadcrumb();
+    requestAnimationFrame(centerView);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     SEARCH — client-side with API fallback
+     ══════════════════════════════════════════════════════════════════ */
+  let searchTimeout = null;
+
+  function clientSearch(q) {
+    if (!fullTree) return [];
+    const lower = q.toLowerCase();
+    const all = flattenTree(fullTree);
+    const results = [];
+    for (const n of all) {
+      const haystack = [
+        n.full_name || "",
+        n.first_name || "",
+        n.last_name || "",
+        n.job_title || "",
+        n.employee_id || ""
+      ].join(" ").toLowerCase();
+      if (haystack.includes(lower)) {
+        results.push(n);
+        if (results.length >= 10) break;
+      }
+    }
+    return results;
+  }
+
+  function highlightMatch(text, query) {
+    if (!text) return "";
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return esc(text);
+    return esc(text.substring(0, idx)) + '<mark>' + esc(text.substring(idx, idx + query.length)) + '</mark>' + esc(text.substring(idx + query.length));
+  }
+
+  $search.addEventListener("input", () => {
+    clearTimeout(searchTimeout);
+    const q = $search.value.trim();
+    if (q.length < 2) {
+      $searchRes.classList.remove("open");
+      return;
+    }
+    searchTimeout = setTimeout(() => doSearch(q), 150);
+  });
+
+  $search.addEventListener("blur", () => {
+    setTimeout(() => $searchRes.classList.remove("open"), 200);
+  });
+
+  function doSearch(q) {
+    const results = clientSearch(q);
+
+    if (results.length === 0) {
+      // Fallback to API search
+      fetch(API_BASE + "/employees/search/?q=" + encodeURIComponent(q) + "&limit=10")
+        .then(r => r.ok ? r.json() : [])
+        .then(apiResults => {
+          if (apiResults.length === 0) {
+            $searchRes.innerHTML = '<div class="oc-search-results-header">No results found</div>';
+          } else {
+            $searchRes.innerHTML = '<div class="oc-search-results-header">Results (server)</div>' +
+              apiResults.map(r =>
+                '<div class="oc-search-result" data-eid="' + r.employee_id + '">' +
+                '<div class="sr-name">' + esc(r.full_name) + '</div>' +
+                '<div class="sr-title">' + esc(r.job_title || r.management_level || "") + '</div>' +
+                '</div>'
+              ).join("");
+          }
+          $searchRes.classList.add("open");
+        })
+        .catch(() => {});
+      return;
+    }
+
+    let html = '<div class="oc-search-results-header">Results for \u201c' + esc(q) + '\u201d</div>';
+    for (const n of results) {
+      html += '<div class="oc-search-result" data-eid="' + n.employee_id + '">';
+      html += '<div class="sr-name">' + highlightMatch(n.full_name, q) + '</div>';
+      html += '<div class="sr-title">' + highlightMatch(n.job_title || "", q) + '</div>';
+      if (n.employee_id.toLowerCase().includes(q.toLowerCase())) {
+        html += '<div class="sr-id">ID: ' + highlightMatch(n.employee_id, q) + '</div>';
+      }
+      html += '</div>';
+    }
+    $searchRes.innerHTML = html;
+    $searchRes.classList.add("open");
+  }
+
+  $searchRes.addEventListener("click", e => {
+    const item = e.target.closest(".oc-search-result");
+    if (!item || !item.dataset.eid) return;
+    $search.value = "";
+    $searchRes.classList.remove("open");
+    navigateToEmployee(item.dataset.eid);
+  });
+
+  function navigateToEmployee(eid) {
+    const path = buildPathTo(fullTree, eid);
+    if (path.length === 0) return;
+
+    // Expand all ancestors
+    for (const p of path) expandedSet.add(p.employee_id);
+
+    // Focus on parent so the target card is visible as a child
+    if (path.length >= 2) {
+      focusOnNode(path[path.length - 2].employee_id);
+      // Re-expand the target too in case focusOnNode cleared it
+      for (const p of path) expandedSet.add(p.employee_id);
+      renderTree();
+      renderBreadcrumb();
+    } else {
+      focusOnNode(eid);
+    }
+
+    // Highlight the target card briefly
+    requestAnimationFrame(() => {
+      const card = $tree.querySelector('.oc-card[data-eid="' + eid + '"]');
+      if (card) {
+        card.style.boxShadow = "0 0 0 3px var(--accent), 0 0 16px rgba(164,146,117,0.4)";
+        card.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        setTimeout(() => { card.style.boxShadow = ""; }, 2500);
+      }
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     FILTER DROPDOWNS
+     ══════════════════════════════════════════════════════════════════ */
+  const filterConfig = {
+    role:     { dropdown: document.getElementById("oc-fd-role"),     field: "management_level", label: "Role Type" },
+    location: { dropdown: document.getElementById("oc-fd-location"), field: "state",            label: "Location" },
+    entity:   { dropdown: document.getElementById("oc-fd-entity"),   field: "entity",           label: "Entity" },
+  };
+
+  /* Build checkboxes inside a filter dropdown */
+  function buildFilterDropdown(key) {
+    const cfg = filterConfig[key];
+    const values = filterValues[key];
+    const dd = cfg.dropdown;
+
+    if (values.length === 0) {
+      dd.innerHTML = '<div style="padding:0.5rem 0.7rem;color:var(--text-muted);font-size:0.78rem;">No values found</div>';
+      return;
+    }
+
+    let html = '';
+    for (const v of values) {
+      const checked = filters[key] === null || filters[key].has(v);
+      html += '<label><input type="checkbox" data-fkey="' + key + '" value="' + esc(v) + '"' + (checked ? ' checked' : '') + ' /> ' + esc(v || "(blank)") + '</label>';
+    }
+    html += '<div class="fdd-actions">';
+    html += '<button class="fdd-link" data-fdd-action="all" data-fkey="' + key + '">Select All</button>';
+    html += '<button class="fdd-link" data-fdd-action="none" data-fkey="' + key + '">Select None</button>';
+    html += '</div>';
+    dd.innerHTML = html;
+  }
+
+  function buildAllFilterDropdowns() {
+    for (const key of Object.keys(filterConfig)) {
+      buildFilterDropdown(key);
+    }
+  }
+
+  /* Toggle dropdown open/close */
+  document.getElementById("oc-filters").addEventListener("click", e => {
+    const btn = e.target.closest(".oc-filter-btn[data-filter]");
+    if (!btn) return;
+
+    const key = btn.dataset.filter;
+    const dd = filterConfig[key].dropdown;
+    const isOpen = dd.classList.contains("open");
+
+    // Close all dropdowns
+    closeAllDropdowns();
+
+    if (!isOpen) {
+      dd.classList.add("open");
+      btn.classList.add("active");
+    }
+  });
+
+  function closeAllDropdowns() {
+    for (const key of Object.keys(filterConfig)) {
+      filterConfig[key].dropdown.classList.remove("open");
+    }
+    document.querySelectorAll(".oc-filter-btn[data-filter]").forEach(b => b.classList.remove("active"));
+  }
+
+  /* Close dropdown on outside click */
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".oc-dropdown-anchor") && !e.target.closest(".oc-filter-btn[data-filter]")) {
+      closeAllDropdowns();
+    }
+  });
+
+  /* Handle checkbox changes */
+  document.getElementById("oc-filters").addEventListener("change", e => {
+    const cb = e.target;
+    if (cb.type !== "checkbox" || !cb.dataset.fkey) return;
+    applyFilterFromCheckboxes(cb.dataset.fkey);
+  });
+
+  /* Handle Select All / Select None */
+  document.getElementById("oc-filters").addEventListener("click", e => {
+    const actionBtn = e.target.closest("[data-fdd-action]");
+    if (!actionBtn) return;
+
+    const key = actionBtn.dataset.fkey;
+    const dd = filterConfig[key].dropdown;
+    const all = actionBtn.dataset.fddAction === "all";
+
+    dd.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = all; });
+    applyFilterFromCheckboxes(key);
+  });
+
+  function applyFilterFromCheckboxes(key) {
+    const dd = filterConfig[key].dropdown;
+    const checkboxes = dd.querySelectorAll('input[type="checkbox"]');
+    const checked = new Set();
+    let allChecked = true;
+
+    checkboxes.forEach(cb => {
+      if (cb.checked) checked.add(cb.value);
+      else allChecked = false;
+    });
+
+    if (allChecked || checked.size === 0) {
+      filters[key] = null;  // No filter
+    } else {
+      filters[key] = checked;
+    }
+
+    updateFilterUI();
+    renderTree();
+    requestAnimationFrame(drawConnectors);
+  }
+
+  /* ── Update filter button badges and summary ─────────────────────── */
+  function updateFilterUI() {
+    for (const key of Object.keys(filterConfig)) {
+      const btn = document.querySelector('.oc-filter-btn[data-filter="' + key + '"]');
+      const existingBadge = btn.querySelector(".oc-filter-count");
+      if (existingBadge) existingBadge.remove();
+
+      if (filters[key]) {
+        const badge = document.createElement("span");
+        badge.className = "oc-filter-count";
+        badge.textContent = filters[key].size;
+        btn.appendChild(badge);
+      }
+    }
+
+    // Clear All button
+    $clearAll.classList.toggle("visible", anyFilterActive());
+
+    // Summary bar
+    updateFilterSummary();
+  }
+
+  function updateFilterSummary() {
+    const parts = [];
+    if (filters.role) parts.push("<strong>" + [...filters.role].slice(0, 3).join(", ") + (filters.role.size > 3 ? " +" + (filters.role.size - 3) : "") + "</strong>");
+    if (filters.location) parts.push("<strong>" + [...filters.location].slice(0, 3).join(", ") + (filters.location.size > 3 ? " +" + (filters.location.size - 3) : "") + "</strong>");
+    if (filters.entity) parts.push("<strong>" + [...filters.entity].slice(0, 2).join(", ") + (filters.entity.size > 2 ? " +" + (filters.entity.size - 2) : "") + "</strong>");
+
+    if (parts.length > 0) {
+      $filterSum.innerHTML = "Showing: " + parts.join(" &middot; ");
+      $filterSum.classList.add("visible");
+    } else {
+      $filterSum.classList.remove("visible");
+    }
+  }
+
+  /* Clear All */
+  $clearAll.addEventListener("click", () => {
+    filters.role = null;
+    filters.location = null;
+    filters.entity = null;
+    buildAllFilterDropdowns();
+    updateFilterUI();
+    renderTree();
+    requestAnimationFrame(drawConnectors);
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+     THRESHOLD HIGHLIGHTING
+     ══════════════════════════════════════════════════════════════════ */
+  const $thToggle = document.getElementById("oc-threshold-toggle");
+
+  $thToggle.addEventListener("click", () => {
+    closeAllDropdowns();
+    const isOpen = $thBar.classList.contains("open");
+    if (isOpen) {
+      closeThresholdBar();
+    } else {
+      $thBar.classList.add("open");
+      $thToggle.classList.add("active");
+    }
+  });
+
+  document.getElementById("oc-th-apply").addEventListener("click", () => {
+    const metric = $thMetric.value;
+    const value = parseFloat($thValue.value);
+    if (isNaN(value)) return;
+
+    customThreshold = { metric, value };
+    renderTree();
+    requestAnimationFrame(drawConnectors);
+  });
+
+  document.getElementById("oc-th-close").addEventListener("click", closeThresholdBar);
+
+  function closeThresholdBar() {
+    $thBar.classList.remove("open");
+    $thToggle.classList.remove("active");
+    if (customThreshold) {
+      customThreshold = null;
+      renderTree();
+      requestAnimationFrame(drawConnectors);
+    }
+  }
+
+  /* Set sensible default value when metric changes */
+  $thMetric.addEventListener("change", () => {
+    const defaults = {
+      avg_span_of_control: 10,
+      headcount: 100,
+      num_layers: 5,
+      total_labor_cost: 1000000,
+      overhead_pct: 25,
+    };
+    $thValue.value = defaults[$thMetric.value] || 10;
+  });
+
+  /* ── Snapshot switch ─────────────────────────────────────────────── */
+  if ($snapSelect) {
+    $snapSelect.addEventListener("change", () => {
+      snapshotId = parseInt($snapSelect.value, 10);
+      loadTree();
+    });
+  }
+
+  /* ── Data loading ────────────────────────────────────────────────── */
+  async function loadTree() {
+    $loading.style.display = "flex";
+    $tree.innerHTML = "";
+    $svg.innerHTML = "";
+
+    try {
+      const url = API_BASE + "/org-tree/?snapshot_id=" + snapshotId;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("Failed to load org tree");
+      const data = await resp.json();
+
+      fullTree = data.tree;
+      const root = Array.isArray(fullTree) ? fullTree[0] : fullTree;
+      viewRoot = root;
+      focusPath = [];
+      expandedSet.clear();
+      autoExpand(root, DEFAULT_EXPAND_DEPTH);
+
+      // Reset filters on new data
+      filters = { role: null, location: null, entity: null };
+      customThreshold = null;
+      extractFilterValues();
+      buildAllFilterDropdowns();
+      updateFilterUI();
+
+      renderTree();
+      renderBreadcrumb();
+      requestAnimationFrame(centerView);
+    } catch (err) {
+      $loading.innerHTML = '<div class="oc-empty"><p>Failed to load org chart data.</p><a href="{% url "org_view:index" %}">&larr; Back to Dashboard</a></div>';
+    }
+  }
+
+  /* ── Window resize ───────────────────────────────────────────────── */
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(drawConnectors, 150);
+  });
+
+  /* ── Init ────────────────────────────────────────────────────────── */
+  loadTree();
+
+})();
+</script>
+{% endif %}
+{% endblock %}

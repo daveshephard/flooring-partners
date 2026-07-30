@@ -82,6 +82,7 @@ INSTALLED_APPS = [
 
     # User Defined Apps
     "accounts",
+    "org_view",
 
     # Third-party
     "storages",

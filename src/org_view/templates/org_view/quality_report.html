@@ -1,0 +1,190 @@
+{% extends "org_view/base.html" %}
+
+{% block title %}Quality Report{% endblock %}
+
+{% block extra_css %}
+.qr-header h2 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.qr-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+}
+
+.qr-stats {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.qr-stat {
+  flex: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.qr-stat .num {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.qr-stat .lbl {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.qr-stat.ok .num  { color: var(--success); }
+.qr-stat.err .num { color: var(--danger);  }
+.qr-stat.wrn .num { color: #E8A838;        }
+
+.issue-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+
+.issue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.issue-header:hover { background: rgba(164,146,117,0.05); }
+
+.issue-title {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.issue-count {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.15rem;
+  font-weight: 600;
+}
+
+.issue-count.err { background: rgba(224,112,112,0.15); color: var(--danger); }
+.issue-count.wrn { background: rgba(232,168,56,0.15);  color: #E8A838;      }
+
+.issue-body {
+  display: none;
+  padding: 0.5rem 1rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.issue-body.open { display: block; }
+
+.issue-rows {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+  word-break: break-all;
+}
+
+.qr-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  <a href="{% url 'org_view:upload' %}">Upload</a>
+  <span class="sep">/</span>
+  Quality Report
+</div>
+
+<div class="qr-header">
+  <h2>Data Quality Report</h2>
+  <p class="qr-meta">{{ filename }} &mdash; {{ row_count }} row{{ row_count|pluralize }}</p>
+</div>
+
+<div class="qr-stats">
+  <div class="qr-stat ok">
+    <div class="num">{{ row_count }}</div>
+    <div class="lbl">Total Rows</div>
+  </div>
+  <div class="qr-stat{% if error_row_count %} err{% else %} ok{% endif %}">
+    <div class="num">{{ error_row_count }}</div>
+    <div class="lbl">Error{{ error_row_count|pluralize }}</div>
+  </div>
+  <div class="qr-stat{% if warning_row_count %} wrn{% else %} ok{% endif %}">
+    <div class="num">{{ warning_row_count }}</div>
+    <div class="lbl">Warning{{ warning_row_count|pluralize }}</div>
+  </div>
+</div>
+
+{% if errors %}
+<div class="section-heading" style="color:var(--danger);">Errors (must resolve)</div>
+{% for e in errors %}
+<div class="issue-section">
+  <div class="issue-header" onclick="this.nextElementSibling.classList.toggle('open')">
+    <span class="issue-title">{{ e.label }}</span>
+    <span class="issue-count err">{{ e.rows|length }}</span>
+  </div>
+  <div class="issue-body">
+    <p>{{ e.message }}</p>
+    <p class="issue-rows">Rows: {{ e.rows|join:", " }}</p>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if warnings %}
+<div class="section-heading" style="color:#E8A838;margin-top:1rem;">Warnings (recommended to fix)</div>
+{% for w in warnings %}
+<div class="issue-section">
+  <div class="issue-header" onclick="this.nextElementSibling.classList.toggle('open')">
+    <span class="issue-title">{{ w.label }}</span>
+    <span class="issue-count wrn">{{ w.rows|length }}</span>
+  </div>
+  <div class="issue-body">
+    <p>{{ w.message }}</p>
+    <p class="issue-rows">Rows: {{ w.rows|join:", " }}</p>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not errors and not warnings %}
+<div class="card" style="text-align:center;padding:2rem;">
+  <p style="color:var(--success);font-size:1.1rem;font-weight:600;">All data looks good!</p>
+</div>
+{% endif %}
+
+<div class="qr-actions">
+  {% if not has_blocking %}
+  <form method="post" action="{% url 'org_view:save_snapshot' %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary">
+      {% if warnings %}Proceed Anyway{% else %}Save Snapshot{% endif %}
+    </button>
+  </form>
+  {% endif %}
+  <a href="{% url 'org_view:bulk_edit' %}" class="btn btn-secondary">Fix Issues</a>
+  <a href="{% url 'org_view:upload' %}" class="btn btn-secondary">Start Over</a>
+</div>
+{% endblock %}

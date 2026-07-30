@@ -1,0 +1,107 @@
+{% extends "org_view/base.html" %}
+
+{% block title %}Upload Census{% endblock %}
+{% block nav_index %}{% endblock %}
+
+{% block extra_css %}
+.upload-card {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.upload-card h2 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+}
+
+.upload-actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 1.5rem;
+}
+
+.file-info {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  Upload Census
+</div>
+
+<div class="card upload-card">
+  <h2>Upload Census File</h2>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div class="form-group">
+      <label for="company_id">Company</label>
+      <select name="company_id" id="company_id" class="form-control" required>
+        <option value="">-- Select company --</option>
+        {% for co in companies %}
+          <option value="{{ co.id }}">{{ co.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="label">Snapshot Label <span style="color:var(--text-muted);text-transform:none;letter-spacing:0">(optional)</span></label>
+      <input type="text" name="label" id="label" class="form-control" placeholder="e.g. Q4 2025">
+    </div>
+
+    <div class="form-group">
+      <label for="effective_date">Census Effective Date</label>
+      <input type="date" name="effective_date" id="effective_date" class="form-control" required>
+      <p class="file-info">What date does this census represent? (e.g., end of quarter, payroll run date)</p>
+    </div>
+
+    <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+      <input type="checkbox" name="set_as_active" id="set_as_active" checked>
+      <label for="set_as_active" style="margin-bottom:0;text-transform:none;letter-spacing:0;font-size:0.88rem;color:var(--text-main);">
+        Set as active snapshot
+      </label>
+      <span style="color:var(--text-muted);font-size:0.75rem;">(used for the org chart view)</span>
+    </div>
+
+    <div class="form-group">
+      <label for="file">Census File</label>
+      <input type="file" name="file" id="file" class="form-control" accept=".csv,.xlsx,.xls" required>
+      <p class="file-info">Accepted formats: .csv, .xlsx, .xls</p>
+    </div>
+
+    <div class="upload-actions">
+      <button type="submit" class="btn btn-primary">Upload &amp; Map Columns</button>
+      <a href="{% url 'org_view:download_template' %}" class="btn btn-secondary btn-sm">Download Template</a>
+    </div>
+  </form>
+</div>
+
+{% if not companies %}
+<div class="empty-state" style="margin-top:2rem;">
+  <p>You don't have admin access to any companies yet.<br>
+  Ask a superadmin to grant you access in the admin panel.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var d = document.getElementById('effective_date');
+  if (d) {
+    var today = new Date().toISOString().split('T')[0];
+    d.value = today;
+    d.max = today;
+  }
+})();
+</script>
+{% endblock %}

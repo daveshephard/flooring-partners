@@ -1,0 +1,123 @@
+{% extends "org_view/base.html" %}
+{% block title %}Permissions Admin{% endblock %}
+
+{% block extra_css %}
+.perm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+.perm-header h1 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.perm-header p { color: var(--text-muted); font-size: 0.88rem; }
+
+.perm-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.badge-admin { background: rgba(164, 146, 117, 0.2); color: var(--accent-light); }
+.badge-viewer { background: rgba(52, 152, 219, 0.2); color: #5dade2; }
+.badge-active { background: rgba(106, 191, 105, 0.15); color: var(--success); }
+.badge-inactive { background: rgba(224, 112, 112, 0.15); color: var(--danger); }
+
+.branch-info {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.branch-info .full-org { color: var(--success); font-size: 0.72rem; }
+
+td .btn { margin-right: 0.3rem; }
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  Admin
+  <span class="sep">/</span>
+  Permissions
+</div>
+
+<div class="perm-header">
+  <div>
+    <h1>Permission Management</h1>
+    <p>Manage user access to OrgView companies and branches.</p>
+  </div>
+  <div class="perm-actions">
+    <a href="{% url 'org_view:permission_quick_setup' %}" class="btn btn-secondary btn-sm">Quick Setup</a>
+    <a href="{% url 'org_view:permission_add' %}" class="btn btn-primary btn-sm">+ Add Permission</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Company</th>
+          <th>Role</th>
+          <th>Branch Access</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in permissions %}
+        <tr>
+          <td>
+            <strong>{{ p.user.get_full_name|default:p.user.username }}</strong><br>
+            <span style="font-size:0.75rem;color:var(--text-muted);">{{ p.user.email }}</span>
+          </td>
+          <td>{{ p.company.name }}</td>
+          <td>
+            <span class="badge badge-{{ p.role }}">{{ p.get_role_display }}</span>
+          </td>
+          <td class="branch-info">
+            {% if p.branch_name %}
+              {{ p.branch_name }}
+            {% elif p.branch_root_employee_id %}
+              ID: {{ p.branch_root_employee_id }}
+            {% else %}
+              <span class="full-org">Full Organization</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.is_active %}
+              <span class="badge badge-active">Active</span>
+            {% else %}
+              <span class="badge badge-inactive">Inactive</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{% url 'org_view:permission_edit' pk=p.pk %}" class="btn btn-secondary btn-xs">Edit</a>
+            <form method="post" action="{% url 'org_view:permission_delete' pk=p.pk %}" style="display:inline;" onsubmit="return confirm('Delete this permission?');">
+              {% csrf_token %}
+              <button type="submit" class="btn btn-danger btn-xs">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="empty-state" style="padding:2rem;">
+            <p>No permissions configured yet.</p>
+            <a href="{% url 'org_view:permission_add' %}" class="btn btn-primary btn-sm">+ Add Permission</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

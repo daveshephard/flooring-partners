@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from .views import app_hub, healthz, logout_view, placeholder_app
+from .views import app_hub, healthz, logout_view
 
 urlpatterns = [
     # Landing page = login
@@ -22,15 +22,9 @@ urlpatterns = [
     # App hub
     path("apps/", app_hub, name="app_hub"),
 
-    # Org View — placeholder until the real app is ported (see 06-org-view-port-plan.md).
-    # When the real app lands, replace this line with:
-    #     path("org-view/", include("org_view.urls")),
-    path(
-        "org-view/",
-        placeholder_app,
-        {"app_name": "Org View", "section": "Business Performance and Reporting"},
-        name="org_view_placeholder",
-    ),
+    # Org View — the real app (ported per 06-org-view-port-plan.md).
+    # placeholder_app remains in views.py for future Coming Soon cards.
+    path("org-view/", include("org_view.urls")),
 
     # Admin panel (custom accounts admin views)
     path("admin-panel/", include("accounts.urls")),

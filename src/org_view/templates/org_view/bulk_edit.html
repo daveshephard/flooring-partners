@@ -1,0 +1,209 @@
+{% extends "org_view/base.html" %}
+
+{% block title %}Bulk Edit{% endblock %}
+
+{% block extra_css %}
+.be-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.be-header h2 {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.be-filters {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.be-filters button {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.be-filters button.active {
+  border-color: var(--accent);
+  color: var(--text-main);
+  background: var(--accent-soft);
+}
+
+.be-wrap {
+  overflow-x: auto;
+  max-height: 65vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.be-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  min-width: 100%;
+}
+
+.be-table thead { position: sticky; top: 0; z-index: 2; }
+
+.be-table th {
+  background: var(--bg);
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.be-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid rgba(60,69,75,0.25);
+  min-width: 80px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.be-table td[contenteditable] { cursor: text; }
+.be-table td[contenteditable]:focus {
+  outline: 1px solid var(--accent);
+  background: rgba(164,146,117,0.08);
+}
+
+tr.row-error td:first-child   { box-shadow: inset 3px 0 0 var(--danger); }
+tr.row-warning td:first-child { box-shadow: inset 3px 0 0 #E8A838; }
+
+.be-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="{% url 'org_view:index' %}">OrgView</a>
+  <span class="sep">/</span>
+  <a href="{% url 'org_view:upload' %}">Upload</a>
+  <span class="sep">/</span>
+  Bulk Edit
+</div>
+
+<div class="be-header">
+  <h2>Edit Census Data <span style="font-weight:400;font-size:0.85rem;color:var(--text-muted);">{{ filename }}</span></h2>
+  <div class="be-filters">
+    <button class="active" onclick="filterRows('all', this)">All</button>
+    <button onclick="filterRows('errors', this)">Errors</button>
+    <button onclick="filterRows('warnings', this)">Warnings</button>
+  </div>
+</div>
+
+<form id="bulk_form" method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" id="action_input" value="revalidate">
+  <input type="hidden" name="rows_json" id="rows_json" value="">
+
+  <div class="be-wrap">
+    <table class="be-table" id="edit_table">
+      <thead>
+        <tr>
+          <th>#</th>
+          {% for field, label in display_fields %}<th>{{ label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {# Rows are rendered via JS from the JSON blob for consistent round-tripping #}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="be-actions">
+    <button type="button" class="btn btn-primary" onclick="doSubmit('save')">Save Snapshot</button>
+    <button type="button" class="btn btn-secondary" onclick="doSubmit('revalidate')">Re-validate</button>
+    <a href="{% url 'org_view:quality_report' %}" class="btn btn-secondary">Back to Report</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const rows = {{ rows_json|safe }};
+const errorRows = new Set({{ error_rows_json|safe }});
+const warningRows = new Set({{ warning_rows_json|safe }});
+const fields = [{% for f, l in display_fields %}"{{ f }}",{% endfor %}];
+
+const tbody = document.querySelector('#edit_table tbody');
+
+function renderTable() {
+  tbody.innerHTML = '';
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    tr.dataset.row = row._row_num;
+    if (errorRows.has(row._row_num))       tr.classList.add('row-error');
+    else if (warningRows.has(row._row_num)) tr.classList.add('row-warning');
+
+    // Row number cell (not editable)
+    const numTd = document.createElement('td');
+    numTd.textContent = row._row_num;
+    numTd.style.color = 'var(--text-muted)';
+    tr.appendChild(numTd);
+
+    fields.forEach(f => {
+      const td = document.createElement('td');
+      td.contentEditable = 'true';
+      td.dataset.field = f;
+      td.textContent = row[f] || '';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+renderTable();
+
+function collectRows() {
+  const out = [];
+  document.querySelectorAll('#edit_table tbody tr').forEach(tr => {
+    const r = {_row_num: parseInt(tr.dataset.row)};
+    tr.querySelectorAll('[data-field]').forEach(td => {
+      r[td.dataset.field] = td.textContent.trim();
+    });
+    out.push(r);
+  });
+  return out;
+}
+
+function doSubmit(action) {
+  document.getElementById('action_input').value = action;
+  document.getElementById('rows_json').value = JSON.stringify(collectRows());
+  document.getElementById('bulk_form').submit();
+}
+
+function filterRows(mode, btn) {
+  document.querySelectorAll('.be-filters button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('#edit_table tbody tr').forEach(tr => {
+    const n = parseInt(tr.dataset.row);
+    if (mode === 'all')           tr.style.display = '';
+    else if (mode === 'errors')   tr.style.display = errorRows.has(n) ? '' : 'none';
+    else if (mode === 'warnings') tr.style.display = warningRows.has(n) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}
