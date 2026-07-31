@@ -225,7 +225,7 @@ def hr_actions_sheet(company, snapshot, *, include_inactive=False) -> tuple[str,
 
         elif c.kind == K.SET_ROOT:
             emit(c.employee_id, "Change manager", "Supervisor",
-                 who(before.get("raw_supervisor_id")), "(none — top of organisation)")
+                 who(before.get("raw_supervisor_id")), "(none — top of org)")
 
         elif c.kind == K.ATTRIBUTE:
             for field, value in after.items():

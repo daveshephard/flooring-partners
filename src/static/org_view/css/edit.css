@@ -147,18 +147,54 @@ body.oc-drag-active .oc-card { cursor: grabbing !important; }
 .oc-drag-pill[hidden] { display: none; }
 .oc-drag-pill-count { font-size: 0.66rem; opacity: 0.75; font-weight: 400; }
 
-/* ── Side panel ────────────────────────────────────────────────────── */
-.oc-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 360px;
-  max-width: 90vw;
-  z-index: 60;
+/* ── The right rail ────────────────────────────────────────────────
+   The panel and every editing dialog dock here, as a sibling of the chart
+   rather than an overlay on top of it, so opening one narrows the chart
+   instead of hiding the part you're working on. */
+.oc-workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.oc-rail {
+  flex: 0 0 380px;
+  max-width: 60vw;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: var(--bg);
   border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0,0,0,0.35);
+}
+
+.oc-rail[hidden] { display: none; }
+
+/* The review diff is a table — it needs room the editing forms don't. */
+.oc-rail.wide { flex: 0 0 min(760px, 55vw); }
+
+/* A docked dialog takes the rail; the panel waits behind it rather than
+   competing for the same column. */
+.oc-rail.has-modal > .oc-panel { display: none; }
+
+@media (max-width: 900px) {
+  /* Too narrow to sit side by side — fall back to overlaying. */
+  .oc-rail {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    flex-basis: min(380px, 92vw);
+    z-index: 70;
+    box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  }
+  .oc-rail.wide { flex-basis: min(560px, 96vw); }
+}
+
+/* ── Side panel ────────────────────────────────────────────────────── */
+.oc-panel {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -429,31 +465,30 @@ button.oc-tile:hover { border-color: var(--accent); }
   text-decoration: underline;
 }
 
-/* ── Modals (review, scenario picker, confirms) ────────────────────── */
+/* ── Docked dialogs (review, group editor, confirms) ───────────────
+   Named "modal" for continuity, but they dock into the rail rather than float
+   over the chart — you nearly always need to see the chart while deciding. */
+#oc-modal-host {
+  display: contents;
+}
+
 .oc-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.6);
-  z-index: 900;
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem 1rem;
+  flex-direction: column;
 }
 .oc-modal-backdrop[hidden] { display: none; }
 
 .oc-modal {
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
   width: 100%;
-  max-width: 900px;
-  max-height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.oc-modal.narrow { max-width: 480px; }
 
 .oc-modal-head {
   padding: 0.8rem 1rem;

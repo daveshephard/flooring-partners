@@ -82,10 +82,10 @@
       <button class="oc-filter-btn" id="oc-threshold-toggle" title="Highlight thresholds">
         <span class="ficon">&#9888;</span> Highlight
       </button>
-      <label class="oc-colorby-wrap" title="Colour each card's header bar by an attribute">
+      <label class="oc-colorby-wrap" title="Color each card's header bar by an attribute">
         <span class="ficon">&#9673;</span>
-        <span class="oc-colorby-label">Colour by</span>
-        <select id="oc-colorby" aria-label="Colour cards by"></select>
+        <span class="oc-colorby-label">Color by</span>
+        <select id="oc-colorby" aria-label="Color cards by"></select>
       </label>
       <button class="oc-clear-filters" id="oc-clear-filters">Clear All</button>
     </div>
@@ -200,18 +200,25 @@
   <!-- Mode summary strip (edit modes only) -->
   <div class="oc-summary-strip" id="oc-summary-strip" hidden></div>
 
-  <!-- Viewport -->
-  <div class="oc-viewport" id="oc-viewport">
-    <svg class="oc-connectors" id="oc-connectors"></svg>
-    <div class="oc-canvas" id="oc-canvas">
-      <div class="oc-tree" id="oc-tree"></div>
+  <!-- Chart and the right rail are siblings in a flex row, so opening a panel
+       narrows the chart rather than covering it. -->
+  <div class="oc-workspace">
+    <div class="oc-viewport" id="oc-viewport">
+      <svg class="oc-connectors" id="oc-connectors"></svg>
+      <div class="oc-canvas" id="oc-canvas">
+        <div class="oc-tree" id="oc-tree"></div>
+      </div>
+      <div class="oc-loading" id="oc-loading">
+        <div class="oc-spinner"></div>
+        <span>Loading org chart&hellip;</span>
+      </div>
+      <aside class="oc-tray collapsed" id="oc-tray" hidden></aside>
     </div>
-    <div class="oc-loading" id="oc-loading">
-      <div class="oc-spinner"></div>
-      <span>Loading org chart&hellip;</span>
-    </div>
-    <aside class="oc-tray collapsed" id="oc-tray" hidden></aside>
-    <aside class="oc-panel" id="oc-panel" hidden></aside>
+
+    <aside class="oc-rail" id="oc-rail" hidden>
+      <div class="oc-panel" id="oc-panel" hidden></div>
+      <div id="oc-modal-host"></div>
+    </aside>
   </div>
 
   <!-- Save bar (edit modes only) -->
@@ -223,7 +230,6 @@
   </div>
 </div>
 
-<div id="oc-modal-host"></div>
 <div class="oc-toasts" id="oc-toasts"></div>
 {% endif %}
 {% endblock %}

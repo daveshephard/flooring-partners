@@ -374,6 +374,9 @@
 /* ── Canvas (pan/zoom area) ────────────────────────────────────────── */
 .oc-viewport {
   flex: 1;
+  /* Must be allowed to shrink below its content when the rail opens, or the
+     flex row overflows instead of the chart narrowing. */
+  min-width: 0;
   overflow: hidden;
   position: relative;
   cursor: grab;

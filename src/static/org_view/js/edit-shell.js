@@ -66,6 +66,7 @@ const $btnDiscard = $("oc-btn-discard");
 const $btnSave   = $("oc-btn-save");
 const $strip     = $("oc-summary-strip");
 const $panel     = $("oc-panel");
+const $rail      = $("oc-rail");
 const $tray      = $("oc-tray");
 const $modalHost = $("oc-modal-host");
 const $toasts    = $("oc-toasts");
@@ -338,8 +339,7 @@ function pickScenario() {
       : '<p style="color:var(--text-muted);font-size:0.85rem;">'
         + 'No scenarios yet — create one to model a reorg.</p>';
     openModal({
-      narrow: true,
-      title: "Open a scenario",
+            title: "Open a scenario",
       body,
       buttons: [
         { label: "Cancel", cls: "btn-secondary", value: null },
@@ -813,6 +813,7 @@ function openPanel(eid) {
 
   $panel.innerHTML = html;
   $panel.hidden = false;
+  syncRail();
   $panel.setAttribute("role", "dialog");
   $panel.setAttribute("aria-label", "Edit " + node.full_name);
   wirePanel(eid, node, fields);
@@ -830,6 +831,17 @@ function currentValue(node, field, staged) {
   return node[field] ?? "";
 }
 
+/** The rail is only present when something is docked in it, so the chart gets
+ *  the full width back the moment you're done. */
+function syncRail() {
+  if (!$rail) return;
+  const modal = $modalHost && $modalHost.querySelector(".oc-modal-backdrop");
+  const panelOpen = $panel && !$panel.hidden;
+  $rail.hidden = !panelOpen && !modal;
+  $rail.classList.toggle("has-modal", !!modal);
+  $rail.classList.toggle("wide", !!(modal && modal.classList.contains("wide")));
+}
+
 function closePanel() {
   if (!$panel) return;
   $panel.hidden = true;
@@ -837,6 +849,7 @@ function closePanel() {
   panelCtx = null;
   const wasSelected = selectedId;
   selectedId = null;
+  syncRail();
   if (wasSelected) rerenderCards();
 }
 
@@ -1101,7 +1114,7 @@ function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {})
     + `<input id="grp-name" value="${esc(group ? group.name : "")}" `
     + `placeholder="e.g. Commercial Sales" autocomplete="off"></div>`;
 
-  body += `<div class="oc-field"><label>Colour</label><div class="oc-accent-row">`
+  body += `<div class="oc-field"><label>Color</label><div class="oc-accent-row">`
     + ACCENTS.map(([key, label]) =>
         `<label class="oc-accent accent-${key}">`
         + `<input type="radio" name="grp-accent" value="${key}"`
@@ -1677,8 +1690,7 @@ async function save() {
 
 function openStaleModal() {
   openModal({
-    narrow: true,
-    title: "This census was replaced while you were editing",
+        title: "This census was replaced while you were editing",
     body: "<p>Someone uploaded a new census, so these changes can't be applied to it. "
         + "Download them first if you want to redo them against the new data.</p>",
     buttons: [
@@ -1807,6 +1819,7 @@ async function openReview(presetErrors) {
   }
 
   openModal({
+    wide: true,
     title: `Review ${changeset.count()} staged change${changeset.count() === 1 ? "" : "s"}`,
     body: body(),
     buttons: [
@@ -1838,11 +1851,11 @@ async function openReview(presetErrors) {
    Modals
    ══════════════════════════════════════════════════════════════════ */
 
-function openModal({ title, body, buttons, narrow, onMount, onClose, onButton }) {
+function openModal({ title, body, buttons, wide, onMount, onClose, onButton }) {
   const root = document.createElement("div");
-  root.className = "oc-modal-backdrop";
+  root.className = "oc-modal-backdrop" + (wide ? " wide" : "");
   root.innerHTML =
-    `<div class="oc-modal${narrow ? " narrow" : ""}" role="dialog" aria-modal="true">`
+    `<div class="oc-modal" role="dialog" aria-modal="false" aria-label="${esc(title)}">`
     + `<div class="oc-modal-head"><h2>${esc(title)}</h2></div>`
     + `<div class="oc-modal-body">${body}</div>`
     + `<div class="oc-modal-foot"><span class="spacer"></span>`
@@ -1850,10 +1863,12 @@ function openModal({ title, body, buttons, narrow, onMount, onClose, onButton })
         `<button class="btn ${b.cls} btn-sm" data-mb="${i}">${esc(b.label)}</button>`).join("")
     + `</div></div>`;
   $modalHost.appendChild(root);
+  syncRail();
 
   function close(value) {
     root.remove();
     document.removeEventListener("keydown", onKey, true);
+    syncRail();
     if (onClose) onClose(value, root);
   }
   function onKey(e) {
@@ -1868,7 +1883,6 @@ function openModal({ title, body, buttons, narrow, onMount, onClose, onButton })
       close(spec.value);
       return;
     }
-    if (e.target === root) close(null);
   });
   document.addEventListener("keydown", onKey, true);
   // onMount gets `close` so a handler can dismiss the modal through its own
@@ -1891,7 +1905,7 @@ function trapFocus(e, root) {
 function confirmModal({ title, body, confirmLabel, extraLabel }) {
   return new Promise(resolve => {
     openModal({
-      narrow: true, title, body: `<p>${esc(body)}</p>`,
+      title, body: `<p>${esc(body)}</p>`,
       buttons: [
         { label: "Cancel", cls: "btn-secondary", value: "cancel" },
         extraLabel ? { label: extraLabel, cls: "btn-secondary", value: "extra" } : null,
@@ -1905,8 +1919,7 @@ function confirmModal({ title, body, confirmLabel, extraLabel }) {
 /** A typed confirm, not a bare confirm() — these actions are consequential. */
 function typedConfirm(question, word, onYes, explanation) {
   openModal({
-    narrow: true,
-    title: question,
+        title: question,
     body: (explanation ? `<p style="margin-bottom:0.6rem;">${esc(explanation)}</p>` : "")
         + `<p>Type <strong>${word}</strong> to confirm.</p>`
         + `<div class="oc-field"><input id="oc-confirm-word" autocomplete="off"></div>`,

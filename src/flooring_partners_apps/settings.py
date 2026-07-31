@@ -226,9 +226,24 @@ STORAGES = {
         ),
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        # Hashed filenames in production so a released JS change can never be
+        # masked by a cached copy — see storages.HashedStaticFilesStorage.
+        # In DEBUG the manifest would require a collectstatic before every
+        # runserver, so dev gets freshness from WhiteNoise instead (below).
+        "BACKEND": (
+            "whitenoise.storage.CompressedStaticFilesStorage"
+            if DEBUG
+            else "flooring_partners_apps.storages.HashedStaticFilesStorage"
+        ),
     },
 }
+
+# Dev: re-read files from disk on each request and tell the browser not to keep
+# them. Without this an edited module keeps serving from cache until a manual
+# hard refresh, which is a miserable way to find out your change did ship.
+if DEBUG:
+    WHITENOISE_AUTOREFRESH = True
+    WHITENOISE_MAX_AGE = 0
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

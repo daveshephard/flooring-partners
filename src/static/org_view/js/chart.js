@@ -148,7 +148,7 @@ const COLOR_OTHER = "#55595f";      // "Other" / "Not set" — deliberately not 
 const HEADER_DEFAULT = "#1B3A5C";   // the original navy, when colouring is off
 
 export const COLOR_DIMENSIONS = [
-  ["", "No colouring"],
+  ["", "No color coding"],
   ["site_location", "Location (site)"],
   ["city", "City"],
   ["state", "State"],
