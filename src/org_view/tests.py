@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -1014,6 +1016,206 @@ class ChangesetTests(OrgFixtureMixin, TestCase):
         ops = [{"op": "attribute", "employee_id": "E3", "after": {"city": str(i)}}
                for i in range(CS.MAX_OPS + 1)]
         self.assertEqual(self.commit(ops).status_code, 413)
+
+
+# ===========================================================================
+# Exports
+# ===========================================================================
+
+class ExportTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+        self.make_user("admin7", self.company, role="admin")
+        self.client.login(username="admin7", password="pw")
+
+    def url(self, name, **kw):
+        return reverse(f"org_view:{name}", kwargs={"slug": self.company.slug, **kw})
+
+    def csv_rows(self, response):
+        text = response.content.decode("utf-8-sig")
+        return list(csv.reader(io.StringIO(text)))
+
+    def commit(self, ops):
+        return self.client.post(
+            self.url("api_commit_changeset"),
+            data=json.dumps({"target": "corrections", "ops": ops}),
+            content_type="application/json")
+
+    # ── The corrected census ────────────────────────────────────────
+
+    def test_census_csv_round_trips_through_the_importer(self):
+        """The file we hand back must be re-importable without remapping."""
+        from .parsers import auto_map_columns
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        headers = rows[0]
+        mapping = auto_map_columns([h for h in headers if not h.startswith("_")])
+        for required in ("employee_id", "first_name", "last_name", "supervisor_id"):
+            self.assertIsNotNone(mapping.get(required), f"{required} would not auto-map")
+        self.assertEqual(len(rows) - 1, 7)
+
+    def test_census_export_reflects_corrections_not_the_raw_import(self):
+        self.commit([{"op": "reparent", "employee_id": "E3",
+                      "after": {"raw_supervisor_id": "E5"}, "note": "moved in April"}])
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        headers = rows[0]
+        row = next(r for r in rows[1:] if r[headers.index("employee_id")] == "E3")
+        self.assertEqual(row[headers.index("supervisor_id")], "E5")
+        self.assertEqual(row[headers.index("_corrections")], "Change manager")
+
+    def test_census_export_omits_pay_columns_for_restricted(self):
+        """Omitted, not blanked — a blank column still says the field exists."""
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        self.assertIn("annual_salary", rows[0])
+
+        self.make_user("restricted6", self.company, role="restricted")
+        self.client.logout()
+        self.client.login(username="restricted6", password="pw")
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        for column in ("annual_salary", "fully_loaded_cost", "revenue_attribution"):
+            self.assertNotIn(column, rows[0])
+        self.assertNotIn(b"300000", self.client.get(
+            self.url("export_census") + "?format=csv").content)
+
+    def test_census_export_is_branch_scoped(self):
+        self.make_user("branch5", self.company, role="admin", branch="E2")
+        self.client.logout()
+        self.client.login(username="branch5", password="pw")
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        ids = {r[rows[0].index("employee_id")] for r in rows[1:]}
+        self.assertEqual(ids, {"E2", "E3", "E4"})
+
+    def test_census_export_omits_excluded_rows_unless_asked(self):
+        self.commit([{"op": "exclude", "employee_id": "E4", "after": {}}])
+        rows = self.csv_rows(self.client.get(self.url("export_census") + "?format=csv"))
+        ids = {r[rows[0].index("employee_id")] for r in rows[1:]}
+        self.assertNotIn("E4", ids)
+        rows = self.csv_rows(self.client.get(
+            self.url("export_census") + "?format=csv&include_excluded=1"))
+        ids = {r[rows[0].index("employee_id")] for r in rows[1:]}
+        self.assertIn("E4", ids)
+
+    def test_census_xlsx_carries_data_actions_and_ledger(self):
+        import openpyxl
+        self.commit([{"op": "reparent", "employee_id": "E3",
+                      "after": {"raw_supervisor_id": "E5"}}])
+        resp = self.client.get(self.url("export_census"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+        wb = openpyxl.load_workbook(io.BytesIO(resp.content))
+        self.assertEqual(wb.sheetnames, ["Census", "HR actions", "Corrections"])
+
+    # ── The HR action list ──────────────────────────────────────────
+
+    def test_hr_actions_lists_one_row_per_change(self):
+        self.commit([
+            {"op": "reparent", "employee_id": "E3",
+             "after": {"raw_supervisor_id": "E5"}, "note": "moved to finance"},
+            {"op": "attribute", "employee_id": "E4",
+             "after": {"job_title": "Senior Technician", "department": "Service"}},
+        ])
+        rows = self.csv_rows(self.client.get(self.url("export_hr_actions")))
+        headers = rows[0]
+        self.assertIn("current value in HR system", headers)
+        self.assertIn("change to", headers)
+
+        body = rows[1:]
+        # One row for the move, and one per corrected field — a tickable list.
+        self.assertEqual(len(body), 3)
+        move = next(r for r in body if r[headers.index("employee_id")] == "E3")
+        self.assertEqual(move[headers.index("action")], "Change manager")
+        self.assertIn("Bo Vice (E2)", move[headers.index("current value in HR system")])
+        self.assertIn("El Three (E5)", move[headers.index("change to")])
+        self.assertEqual(move[headers.index("why")], "moved to finance")
+
+        fields = {r[headers.index("field")] for r in body
+                  if r[headers.index("employee_id")] == "E4"}
+        self.assertEqual(fields, {"Job Title", "Department"})
+
+    def test_hr_actions_includes_reports_moved_by_an_elimination(self):
+        """Eliminating a manager is a manager change for every one of their reports."""
+        self.commit([{"op": "eliminate", "employee_id": "E2",
+                      "after": {"reassign": {"E3": "E5"}}, "note": "role closed"}])
+        rows = self.csv_rows(self.client.get(self.url("export_hr_actions")))
+        headers = rows[0]
+        body = rows[1:]
+
+        removal = next(r for r in body if r[headers.index("employee_id")] == "E2")
+        self.assertEqual(removal[headers.index("action")], "Remove position")
+
+        moves = {r[headers.index("employee_id")]: r for r in body
+                 if r[headers.index("action")] == "Change manager"}
+        self.assertEqual(set(moves), {"E3", "E4"})
+        self.assertIn("El Three (E5)", moves["E3"][headers.index("change to")])
+        self.assertIn("Ada Root (E1)", moves["E4"][headers.index("change to")])
+        self.assertIn("eliminated", moves["E3"][headers.index("why")])
+
+    def test_hr_actions_flags_what_the_source_has_already_done(self):
+        self.commit([{"op": "reparent", "employee_id": "E3",
+                      "after": {"raw_supervisor_id": "E5"}}])
+        # Next census already reports E3 under someone else — the export moved on.
+        rows = [r if r[0] != "E3" else ("E3", "Cy", "One", "E1", "Technician", "100000", "128000")
+                for r in self.ROWS]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        C.replay_corrections(snap_b)
+
+        out = self.csv_rows(self.client.get(self.url("export_hr_actions")))
+        headers, body = out[0], out[1:]
+        row = next(r for r in body if r[headers.index("employee_id")] == "E3")
+        self.assertTrue(row[headers.index("status")].startswith("Check first"))
+
+    def test_hr_actions_sorts_live_work_first(self):
+        self.commit([{"op": "reparent", "employee_id": "E3",
+                      "after": {"raw_supervisor_id": "E5"}}])
+        done = self.correction(
+            self.company, "E4", StructureCorrection.Kind.ATTRIBUTE,
+            {"job_title": "Technician"}, {"job_title": "Lead"},
+            replay_status=StructureCorrection.ReplayStatus.RESOLVED)
+        self.assertTrue(done.pk)
+        out = self.csv_rows(self.client.get(self.url("export_hr_actions")))
+        headers, body = out[0], out[1:]
+        self.assertEqual(body[0][headers.index("status")].split(" —")[0], "Action needed")
+
+    def test_hr_actions_hides_reverted_corrections_unless_asked(self):
+        self.commit([{"op": "reparent", "employee_id": "E3",
+                      "after": {"raw_supervisor_id": "E5"}}])
+        correction = StructureCorrection.objects.get()
+        C.revert_correction(correction, self.snap)
+        self.assertEqual(len(self.csv_rows(self.client.get(self.url("export_hr_actions")))), 1)
+        rows = self.csv_rows(self.client.get(
+            self.url("export_hr_actions") + "?include_inactive=1"))
+        self.assertEqual(len(rows), 2)
+
+    # ── Scenarios ───────────────────────────────────────────────────
+
+    def test_scenario_export_has_three_sheets_and_hides_pay(self):
+        import openpyxl
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="FY27")
+        S.eliminate_position(sc.positions.get(employee_id="E2"))
+        url = reverse("org_view:export_scenario",
+                      kwargs={"slug": self.company.slug, "scenario_id": sc.id})
+
+        wb = openpyxl.load_workbook(io.BytesIO(self.client.get(url).content))
+        self.assertEqual(wb.sheetnames, ["Impact", "Change log", "Positions"])
+        self.assertIn("cost_impact", [c.value for c in wb["Change log"][1]])
+
+        self.make_user("restricted7", self.company, role="restricted")
+        self.client.logout()
+        self.client.login(username="restricted7", password="pw")
+        wb = openpyxl.load_workbook(io.BytesIO(self.client.get(url).content))
+        self.assertNotIn("cost_impact", [c.value for c in wb["Change log"][1]])
+        self.assertNotIn("annual_salary", [c.value for c in wb["Positions"][1]])
+
+    def test_exports_require_company_access(self):
+        other = Company.objects.create(name="Other", slug="other")
+        CensusSnapshot.objects.create(
+            company=other, original_filename="x.csv",
+            status=CensusSnapshot.Status.ACTIVE, is_current=True)
+        for name in ("export_census", "export_hr_actions", "export_corrections"):
+            resp = self.client.get(
+                reverse(f"org_view:{name}", kwargs={"slug": "other"}))
+            self.assertEqual(resp.status_code, 302, name)
 
 
 # ===========================================================================

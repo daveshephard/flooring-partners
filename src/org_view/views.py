@@ -22,6 +22,7 @@ from .models import (
 )
 from .parsers import STANDARD_FIELDS, apply_mapping, auto_map_columns, parse_file
 from .services import corrections as corrections_svc
+from .services import exports
 from .services import scenarios as scenario_svc
 from .validators import validate_rows
 
@@ -277,6 +278,119 @@ def corrections_review(request, slug):
             company=company, is_active=True,
         ).count(),
     })
+
+
+# ---------------------------------------------------------------------------
+# Exports
+# ---------------------------------------------------------------------------
+
+def _export_context(request, slug):
+    """(company, snapshot, include_pay, branch_root) or (None, ..., redirect)."""
+    company, denied = _company_access(request, slug)
+    if denied:
+        return None, None, None, None, denied
+    snap = (
+        CensusSnapshot.objects.filter(
+            company=company, status=CensusSnapshot.Status.ACTIVE, is_current=True,
+        ).first()
+        or CensusSnapshot.objects.filter(company=company, status=CensusSnapshot.Status.ACTIVE)
+        .order_by("-effective_date", "-upload_date").first()
+    )
+    sid = request.GET.get("snapshot_id")
+    if sid:
+        override = CensusSnapshot.objects.filter(
+            id=sid, company=company, status=CensusSnapshot.Status.ACTIVE).first()
+        if override:
+            snap = override
+    perm = _perm_for(request.user, company)
+    return (company, snap, _can_see_pay(request.user, company),
+            (perm.branch_root_employee_id if perm else None), None)
+
+
+def _stamp(snapshot):
+    if not snapshot:
+        return "no-census"
+    return (snapshot.effective_date or snapshot.upload_date.date()).isoformat()
+
+
+@app_access_required("org-view")
+def export_census(request, slug):
+    """The corrected census, ready to hand back to the company and re-import.
+
+    Columns are the canonical import field names, so this file round-trips
+    through the upload pipeline unchanged.
+    """
+    company, snap, include_pay, branch_root, denied = _export_context(request, slug)
+    if denied:
+        return denied
+    if not snap:
+        messages.error(request, "There's no census to export yet.")
+        return redirect("org_view:company_detail", slug=slug)
+
+    title, headers, rows = exports.census_sheet(
+        snap, include_pay=include_pay, branch_root=branch_root,
+        include_excluded=request.GET.get("include_excluded") == "1",
+    )
+    name = f"{company.slug}-census-{_stamp(snap)}"
+
+    if request.GET.get("format") == "csv":
+        return exports.csv_response(name, headers, rows)
+    # The workbook carries the HR worklist alongside the data, because the two
+    # are only useful together: here's the corrected file, here's what changed.
+    return exports.xlsx_response(name, [
+        (title, headers, rows),
+        exports.hr_actions_sheet(company, snap),
+        exports.corrections_sheet(company, snap),
+    ])
+
+
+@app_access_required("org-view")
+def export_hr_actions(request, slug):
+    """The change list HR keys into the source system, on its own."""
+    company, snap, _pay, _branch, denied = _export_context(request, slug)
+    if denied:
+        return denied
+    include_inactive = request.GET.get("include_inactive") == "1"
+    title, headers, rows = exports.hr_actions_sheet(
+        company, snap, include_inactive=include_inactive)
+    name = f"{company.slug}-hr-actions-{_stamp(snap)}"
+    if request.GET.get("format") == "xlsx":
+        return exports.xlsx_response(name, [(title, headers, rows)])
+    return exports.csv_response(name, headers, rows)
+
+
+@app_access_required("org-view")
+def export_corrections(request, slug):
+    company, snap, _pay, _branch, denied = _export_context(request, slug)
+    if denied:
+        return denied
+    title, headers, rows = exports.corrections_sheet(company, snap)
+    name = f"{company.slug}-corrections-{_stamp(snap)}"
+    if request.GET.get("format") == "xlsx":
+        return exports.xlsx_response(name, [
+            (title, headers, rows),
+            exports.hr_actions_sheet(company, snap),
+        ])
+    return exports.csv_response(name, headers, rows)
+
+
+@app_access_required("org-view")
+def export_scenario(request, slug, scenario_id):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+    scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
+    include_pay = _can_see_pay(request.user, company)
+    summary = scenario_svc.scenario_summary(scenario)
+    sheets = exports.scenario_sheets(scenario, summary, include_pay=include_pay)
+    name = f"{company.slug}-scenario-{exports._safe(scenario.name)}"
+
+    if request.GET.get("format") == "csv":
+        # A scenario is three sheets; flattened to CSV the change log is the
+        # part anyone actually wants.
+        _title, headers, rows = sheets[1]
+        return exports.csv_response(name, headers, rows)
+    return exports.xlsx_response(name, sheets)
 
 
 # ---------------------------------------------------------------------------

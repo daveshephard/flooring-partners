@@ -95,6 +95,30 @@
       {% endif %}
     </div>
 
+    <div class="oc-dropdown-anchor">
+      <button class="oc-filter-btn" id="oc-export-btn" title="Export">
+        <span class="ficon">&#8615;</span> Export
+      </button>
+      <div class="oc-filter-dropdown" id="oc-export-menu">
+        <button class="oc-export-item" data-export="svg">Chart as SVG <em>vector, for decks</em></button>
+        <button class="oc-export-item" data-export="png">Chart as PNG <em>2&times; raster</em></button>
+        <div class="oc-export-sep"></div>
+        <a class="oc-export-item" href="{% url 'org_view:export_census' slug=company.slug %}?snapshot_id={{ snapshot.id }}">
+          Corrected census <em>Excel — data, HR actions, ledger</em></a>
+        <a class="oc-export-item" href="{% url 'org_view:export_census' slug=company.slug %}?snapshot_id={{ snapshot.id }}&amp;format=csv">
+          Corrected census <em>CSV — re-importable</em></a>
+        {% if can_edit %}
+        <a class="oc-export-item" href="{% url 'org_view:export_hr_actions' slug=company.slug %}?snapshot_id={{ snapshot.id }}">
+          HR action list <em>what to change in the HR system</em></a>
+        {% endif %}
+        {% if scenario %}
+        <div class="oc-export-sep"></div>
+        <a class="oc-export-item" href="{% url 'org_view:export_scenario' slug=company.slug scenario_id=scenario.id %}">
+          This scenario <em>Excel — impact, change log, roster</em></a>
+        {% endif %}
+      </div>
+    </div>
+
     <div class="oc-zoom-controls">
       <button class="oc-zoom-btn" id="oc-zoom-out" title="Zoom out">&minus;</button>
       <span class="oc-zoom-level" id="oc-zoom-level">100%</span>
@@ -208,6 +232,7 @@
     canEdit:          {{ can_edit|yesno:"true,false" }},
     canSeePay:        {{ can_see_pay|yesno:"true,false" }},
     snapshotId:       {{ snapshot.id|default:"null" }},
+    snapshotLabel:    "{{ snapshot.label|default:'Census'|escapejs }} — {% if snapshot.effective_date %}{{ snapshot.effective_date|date:'j M Y' }}{% else %}{{ snapshot.upload_date|date:'j M Y' }}{% endif %}",
     mode:             "{{ mode|escapejs }}",
     scenarioId:       {{ scenario.id|default:"null" }},
     scenarioName:     {% if scenario %}"{{ scenario.name|escapejs }}"{% else %}null{% endif %},

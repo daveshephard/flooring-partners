@@ -87,7 +87,11 @@
       </div>
       {% if sc.description %}<div class="sc-desc">{{ sc.description }}</div>{% endif %}
     </div>
-    <span class="badge badge-{{ sc.status }}">{{ sc.get_status_display }}</span>
+    <span style="display:flex;align-items:center;gap:0.5rem;">
+      <span class="badge badge-{{ sc.status }}">{{ sc.get_status_display }}</span>
+      <span class="btn btn-secondary btn-xs" data-export-scenario="{{ sc.id }}"
+            title="Impact, change log and roster as Excel">Export</span>
+    </span>
   </a>
   {% endfor %}
 </div>
@@ -96,4 +100,16 @@
   No scenarios yet.{% if can_edit and snapshots %} Create one above to get started.{% endif %}
 </div>
 {% endif %}
+
+<script>
+  /* The whole row is a link into the chart, so Export has to opt out of it. */
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-export-scenario]");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.location.href = "{% url 'org_view:scenario_list' slug=company.slug %}"
+      .replace(/scenarios\/$/, "scenarios/") + btn.dataset.exportScenario + "/export/";
+  });
+</script>
 {% endblock %}

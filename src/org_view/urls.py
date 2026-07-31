@@ -11,6 +11,12 @@ urlpatterns = [
     path("c/<slug:slug>/trends/",     views.trends,            name="trends"),
     path("c/<slug:slug>/corrections/", views.corrections_review, name="corrections_review"),
 
+    # ── Exports ─────────────────────────────────────────────────────────
+    path("c/<slug:slug>/export/census/",     views.export_census,      name="export_census"),
+    path("c/<slug:slug>/export/hr-actions/", views.export_hr_actions,  name="export_hr_actions"),
+    path("c/<slug:slug>/export/corrections/", views.export_corrections, name="export_corrections"),
+    path("c/<slug:slug>/scenarios/<int:scenario_id>/export/", views.export_scenario, name="export_scenario"),
+
     # ── Scenario planning ───────────────────────────────────────────────
     path("c/<slug:slug>/scenarios/",                             views.scenario_list,   name="scenario_list"),
     path("c/<slug:slug>/scenarios/new/",                         views.scenario_create, name="scenario_create"),

@@ -42,7 +42,12 @@
       each time a new census is uploaded, so cleanup only has to be done once.
     </p>
   </div>
-  <div>
+  <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+    <a href="{% url 'org_view:export_hr_actions' slug=company.slug %}?format=xlsx" class="btn btn-primary btn-sm"
+       title="One row per change for whoever keys these into the HR system">HR action list</a>
+    <a href="{% url 'org_view:export_corrections' slug=company.slug %}" class="btn btn-secondary btn-sm">Ledger CSV</a>
+    <a href="{% url 'org_view:export_census' slug=company.slug %}" class="btn btn-secondary btn-sm"
+       title="Corrected census, HR actions and ledger in one workbook">Corrected census</a>
     <a href="{% url 'org_view:company_detail' slug=company.slug %}?mode=correct" class="btn btn-secondary btn-sm">&larr; Org chart</a>
   </div>
 </div>

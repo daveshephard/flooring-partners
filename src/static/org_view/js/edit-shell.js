@@ -18,6 +18,7 @@ import { recomputeMetrics, makeNode } from "./metrics.js";
 import {
   installDragLayer, invalidTargetsFor, branchMembers, findNodeIn, findParentIn,
 } from "./drag.js";
+import { chartToSvg, downloadSvg, downloadPng } from "./export.js";
 
 const CFG = chart.CFG;
 const EDIT_MODES = new Set(["correct", "scenario"]);
@@ -1881,6 +1882,88 @@ function stageSetRootFromDrag(eid, node) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   Chart picture export
+   ══════════════════════════════════════════════════════════════════ */
+
+function buildChartSvg() {
+  return chartToSvg(chart.$tree, chart.getZoom(), {
+    title: CFG.companyName,
+    subtitle: [
+      CFG.snapshotLabel || "",
+      mode === "scenario" ? `Scenario: ${CFG.scenarioName || ""}` : "",
+      changeset.isDirty() ? `${changeset.count()} unsaved change(s) shown` : "",
+      CFG.canSeePay ? "" : "Pay figures hidden",
+    ].filter(Boolean).join("  ·  "),
+    canSeePay: CFG.canSeePay,
+    lookup: eid => findNodeIn(chart.fullTree, eid),
+    groupLabel(el) {
+      const g = chart.resolvedGroup(el.dataset.group) || {};
+      const members = (g.memberIds || []).map(id => findNodeIn(chart.fullTree, id)).filter(Boolean);
+      let heads = 0, cost = 0, anyCost = false;
+      for (const m of members) {
+        heads += (m.metrics.headcount || 1);
+        if (m.metrics.total_labor_cost != null) { cost += m.metrics.total_labor_cost; anyCost = true; }
+      }
+      const figures = [{ value: heads.toLocaleString(), label: heads === 1 ? "person" : "people" }];
+      if (anyCost && CFG.canSeePay) {
+        figures.push({ value: fmtMoney(cost), label: "loaded cost" });
+      }
+      const accent = (el.className.match(/accent-(\w+)/) || [])[1] || "sand";
+      return { name: g.name || "Group", accent, figures };
+    },
+  });
+}
+
+function chartFilename() {
+  const bits = [CFG.companySlug, "org-chart"];
+  if (mode === "scenario" && CFG.scenarioName) bits.push(CFG.scenarioName);
+  return bits.join("-").replace(/[^\w.-]+/g, "-").toLowerCase();
+}
+
+function initExportMenu() {
+  const btn = $("oc-export-btn");
+  const menu = $("oc-export-menu");
+  if (!btn || !menu) return;
+
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    const open = menu.classList.toggle("open");
+    btn.classList.toggle("active", open);
+  });
+  document.addEventListener("click", e => {
+    if (!menu.contains(e.target) && e.target !== btn) {
+      menu.classList.remove("open");
+      btn.classList.remove("active");
+    }
+  });
+
+  menu.addEventListener("click", async e => {
+    const item = e.target.closest("[data-export]");
+    if (!item) {
+      // A plain link — let it download and just close the menu.
+      if (e.target.closest("a")) { menu.classList.remove("open"); btn.classList.remove("active"); }
+      return;
+    }
+    menu.classList.remove("open");
+    btn.classList.remove("active");
+
+    const svg = buildChartSvg();
+    if (!svg) return toast("Nothing on the chart to export yet.", "err");
+    try {
+      if (item.dataset.export === "svg") {
+        downloadSvg(svg, chartFilename());
+        toast("Chart exported as SVG.", "ok");
+      } else {
+        await downloadPng(svg, chartFilename());
+        toast("Chart exported as PNG.", "ok");
+      }
+    } catch (err) {
+      toast(err.message || "Couldn't export the chart.", "err");
+    }
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
    Boot
    ══════════════════════════════════════════════════════════════════ */
 
@@ -1907,6 +1990,7 @@ async function boot() {
 
   applyModeChrome();
   installDrag();
+  initExportMenu();
 
   await loadForMode();
 
