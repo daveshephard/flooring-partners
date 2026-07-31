@@ -64,3 +64,6 @@ jobs:
 
     - name: Edit shell static checks
       run: node src/static/org_view/js/__tests__/shell.static.mjs
+
+    - name: Card palette contract
+      run: node src/static/org_view/js/__tests__/palette.mjs

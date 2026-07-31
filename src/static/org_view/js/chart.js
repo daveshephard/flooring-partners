@@ -122,6 +122,168 @@ export function esc(s) {
   return d.innerHTML;
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   Colour-coding the card header by an attribute
+   ══════════════════════════════════════════════════════════════════
+   The palette is not a taste call — it was computed and validated.
+
+   Slots are the reference categorical hues re-stepped darker so white text
+   clears 4.5:1 on every fill, then re-ordered and re-validated as a set,
+   because darkening changes the separations. Six slots is the largest set that
+   passes every gate with no warning: worst adjacent CVD ΔE 10.7 (target ≥8) and
+   worst normal-vision ΔE 20.1 (floor ≥15) against a light card surface. Seven
+   scraped through at 8.3 — on the floor rather than clear of it — and eight
+   couldn't clear the normal-vision floor in any of the 40,320 orderings.
+
+   So: six hues, fixed order, never cycled. A seventh value folds into "Other"
+   in neutral grey rather than inventing a hue. Identity is never carried by
+   colour alone — the legend is always shown, and the value is on the card.
+
+   All header text is pure white: at any alpha below 1 the sub-lines drop under
+   4.5:1 on the aqua and orange fills, so the name/title/location hierarchy is
+   carried by size and weight instead. */
+
+const COLOR_SLOTS = ["#be542a", "#2974d0", "#15855d", "#4a3aa7", "#ac5b79", "#008300"];
+const COLOR_OTHER = "#55595f";      // "Other" / "Not set" — deliberately not a hue
+const HEADER_DEFAULT = "#1B3A5C";   // the original navy, when colouring is off
+
+export const COLOR_DIMENSIONS = [
+  ["", "No colouring"],
+  ["site_location", "Location (site)"],
+  ["city", "City"],
+  ["state", "State"],
+  ["department", "Department"],
+  ["management_level", "Management level"],
+  ["entity", "Entity"],
+  ["employee_type", "Employee type"],
+  ["__role", "Manager vs individual contributor"],
+  ["__overhead", "Overhead vs frontline"],
+];
+
+let colorBy = "";
+let colorMap = new Map();   // value -> {color, label, count}
+
+/** The value a node takes for the active dimension, including derived ones. */
+function dimensionValue(node, dim) {
+  if (dim === "__role") {
+    return (node.children && node.children.length) || node.child_count
+      ? "Manager" : "Individual contributor";
+  }
+  if (dim === "__overhead") {
+    const v = (node.self || {}).is_overhead;
+    return v === true ? "Overhead" : v === false ? "Frontline" : "";
+  }
+  return (node[dim] || "").trim();
+}
+
+/**
+ * Assign hues over the *whole* tree, not the visible subtree, so focusing or
+ * filtering never repaints the survivors — colour follows the entity, not its
+ * rank in whatever happens to be on screen.
+ */
+function buildColorMap() {
+  colorMap = new Map();
+  if (!colorBy || !fullTree) return;
+
+  const counts = new Map();
+  for (const node of flattenTree(fullTree)) {
+    const v = dimensionValue(node, colorBy);
+    if (!v) continue;
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+
+  const ranked = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  ranked.slice(0, COLOR_SLOTS.length).forEach(([value, count], i) => {
+    colorMap.set(value, { color: COLOR_SLOTS[i], label: value, count });
+  });
+
+  const rest = ranked.slice(COLOR_SLOTS.length);
+  if (rest.length) {
+    colorMap.set("__other", {
+      color: COLOR_OTHER,
+      label: `Other (${rest.length} more)`,
+      count: rest.reduce((sum, [, c]) => sum + c, 0),
+    });
+  }
+}
+
+export function headerColorFor(node) {
+  if (!colorBy) return HEADER_DEFAULT;
+  const v = dimensionValue(node, colorBy);
+  if (!v) return COLOR_OTHER;
+  const hit = colorMap.get(v);
+  return hit ? hit.color : (colorMap.has("__other") ? COLOR_OTHER : HEADER_DEFAULT);
+}
+
+export function getColorBy() { return colorBy; }
+
+export function colorByLabel() {
+  return (COLOR_DIMENSIONS.find(d => d[0] === colorBy) || ["", ""])[1];
+}
+
+/** Legend entries for consumers outside the chart — the SVG export needs these
+ *  so the encoding travels with the picture. */
+export function legendEntries() {
+  if (!colorBy) return [];
+  const out = [...colorMap.values()].map(v => ({ color: v.color, label: v.label }));
+  const unset = flattenTree(fullTree).filter(n => !dimensionValue(n, colorBy)).length;
+  if (unset) out.push({ color: COLOR_OTHER, label: "Not set" });
+  return out;
+}
+
+export function setColorBy(dim) {
+  colorBy = dim || "";
+  buildColorMap();
+  try {
+    const key = "orgview:colorby:" + CFG.companySlug;
+    if (colorBy) localStorage.setItem(key, colorBy);
+    else localStorage.removeItem(key);
+  } catch (e) { /* private mode — the choice just won't persist */ }
+  renderLegend();
+  renderTree();
+}
+
+/** A legend is mandatory for ≥2 categories: identity must never be colour alone. */
+function renderLegend() {
+  const $legend = document.getElementById("oc-legend");
+  if (!$legend) return;
+  if (!colorBy || colorMap.size < 2) {
+    $legend.hidden = true;
+    $legend.innerHTML = "";
+    return;
+  }
+  const label = (COLOR_DIMENSIONS.find(d => d[0] === colorBy) || ["", colorBy])[1];
+  let html = `<span class="oc-legend-title">${esc(label)}</span>`;
+  const unset = flattenTree(fullTree).filter(n => !dimensionValue(n, colorBy)).length;
+  for (const { color, label: text, count } of colorMap.values()) {
+    html += `<span class="oc-legend-item">`
+          + `<span class="oc-legend-swatch" style="background:${color}"></span>`
+          + `${esc(text)} <span class="oc-legend-count">${count}</span></span>`;
+  }
+  if (unset) {
+    html += `<span class="oc-legend-item">`
+          + `<span class="oc-legend-swatch" style="background:${COLOR_OTHER}"></span>`
+          + `Not set <span class="oc-legend-count">${unset}</span></span>`;
+  }
+  $legend.innerHTML = html;
+  $legend.hidden = false;
+}
+
+function initColorBy() {
+  const $select = document.getElementById("oc-colorby");
+  if (!$select) return;
+  $select.innerHTML = COLOR_DIMENSIONS
+    .map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  try {
+    const saved = localStorage.getItem("orgview:colorby:" + CFG.companySlug);
+    if (saved && COLOR_DIMENSIONS.some(d => d[0] === saved)) colorBy = saved;
+  } catch (e) { /* ignore */ }
+  $select.value = colorBy;
+  $select.addEventListener("change", () => setColorBy($select.value));
+}
+
 /* ── Threshold check ─────────────────────────────────────────────── */
 function checkThresholds(metrics) {
   const exceeded = {};
@@ -200,6 +362,15 @@ export function buildPathTo(tree, targetId) {
   return [];
 }
 
+/** Site if the census gave one, else the town — "Tacoma, WA" beats a blank line. */
+export function locationOf(node) {
+  const site = (node.site_location || "").trim();
+  if (site) return site;
+  const city = (node.city || "").trim();
+  const state = (node.state || "").trim();
+  return [city, state].filter(Boolean).join(", ");
+}
+
 export function subtreeHeadcount(node) {
   return (node.metrics && node.metrics.headcount) || 1;
 }
@@ -262,10 +433,15 @@ export function renderCard(node) {
   let html = '<div class="' + cls + '" data-eid="' + esc(node.employee_id) + '"' + tabbable + '>';
 
   // Header
-  html += '<div class="oc-card-header">';
+  html += '<div class="oc-card-header" style="background:' + headerColorFor(node) + '">';
   html += '<div>';
   html += '<div class="oc-card-name">' + esc(node.full_name) + '</div>';
   html += '<div class="oc-card-title">' + esc(node.job_title || "") + '</div>';
+  const place = locationOf(node);
+  if (place) {
+    html += '<div class="oc-card-location"><span aria-hidden="true">◎</span> '
+          + esc(place) + '</div>';
+  }
   if (hooks.decorateCard) {
     const badges = hooks.decorateCard(node);
     if (badges) html += '<div class="oc-card-badges">' + badges + '</div>';
@@ -1098,6 +1274,8 @@ export function setTree(tree) {
   extractFilterValues();
   buildAllFilterDropdowns();
   updateFilterUI();
+  buildColorMap();
+  renderLegend();
   renderTree();
   renderBreadcrumb();
   requestAnimationFrame(centerView);
@@ -1114,6 +1292,10 @@ export function refreshTree(tree) {
   if (focusedId && viewRoot && viewRoot.employee_id !== focusedId) focusPath = [];
   else if (focusedId) focusPath = buildPathTo(fullTree, focusedId);
   extractFilterValues();
+  // Recomputed against the whole tree, so a staged move can't repaint anyone
+  // it didn't touch.
+  buildColorMap();
+  renderLegend();
   renderTree();
   renderBreadcrumb();
 }
@@ -1154,6 +1336,7 @@ export function init() {
   initSearch();
   initFilters();
   initThresholds();
+  initColorBy();
 
   if ($snapSelect) {
     $snapSelect.addEventListener("change", () => {

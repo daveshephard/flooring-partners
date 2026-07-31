@@ -82,6 +82,11 @@
       <button class="oc-filter-btn" id="oc-threshold-toggle" title="Highlight thresholds">
         <span class="ficon">&#9888;</span> Highlight
       </button>
+      <label class="oc-colorby-wrap" title="Colour each card's header bar by an attribute">
+        <span class="ficon">&#9673;</span>
+        <span class="oc-colorby-label">Colour by</span>
+        <select id="oc-colorby" aria-label="Colour cards by"></select>
+      </label>
       <button class="oc-clear-filters" id="oc-clear-filters">Clear All</button>
     </div>
 
@@ -187,6 +192,10 @@
 
   <!-- Filter summary -->
   <div class="oc-filter-summary" id="oc-filter-summary"></div>
+
+  <!-- Colour legend. Always shown while colouring is on: identity must never
+       rest on colour alone. -->
+  <div class="oc-legend" id="oc-legend" hidden></div>
 
   <!-- Mode summary strip (edit modes only) -->
   <div class="oc-summary-strip" id="oc-summary-strip" hidden></div>

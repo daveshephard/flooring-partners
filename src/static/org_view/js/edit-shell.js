@@ -2031,6 +2031,10 @@ function buildChartSvg() {
     ].filter(Boolean).join("  ·  "),
     canSeePay: CFG.canSeePay,
     lookup: eid => findNodeIn(chart.fullTree, eid),
+    headerColor: chart.headerColorFor,
+    locationOf: chart.locationOf,
+    legendTitle: chart.colorByLabel(),
+    legend: chart.legendEntries(),
     groupLabel(el) {
       const g = chart.resolvedGroup(el.dataset.group) || {};
       const members = (g.memberIds || []).map(id => findNodeIn(chart.fullTree, id)).filter(Boolean);

@@ -90,6 +90,8 @@ function textNode(x, y, str, { size = 11, weight = 400, fill = "#1B3A5C",
  * @param opts.lookup     (employeeId) => node, for card content
  * @param opts.groupLabel (element) => {name, figures[]} for a group box
  * @param opts.canSeePay  include cost figures
+ * @param opts.headerColor (node) => the card header fill, honouring "colour by"
+ * @param opts.locationOf  (node) => the location line, or ""
  */
 export function chartToSvg($tree, zoom, opts) {
   const { cards, links, width, height } = collect($tree, zoom);
@@ -106,6 +108,20 @@ export function chartToSvg($tree, zoom, opts) {
 
   out += textNode(PAD, 34, opts.title, { size: 22, weight: 700, fill: "#1B3A5C" });
   out += textNode(PAD, 52, opts.subtitle, { size: 12, fill: "#667" });
+
+  // The colour encoding has to travel with the picture, or the export means
+  // nothing once it's out of the app.
+  const legend = opts.legend || [];
+  if (legend.length) {
+    let lx = PAD;
+    out += textNode(lx, TITLE_H + 6, opts.legendTitle + ":", { size: 10, weight: 700, fill: "#667" });
+    lx += (opts.legendTitle.length * 5.6) + 16;
+    for (const item of legend) {
+      out += `<rect x="${lx}" y="${TITLE_H - 3}" width="10" height="10" rx="2" fill="${item.color}"/>`;
+      out += textNode(lx + 15, TITLE_H + 6, item.label, { size: 10, fill: "#444" });
+      lx += 15 + item.label.length * 5.6 + 18;
+    }
+  }
 
   // Connectors underneath the cards.
   out += `<g fill="none" stroke="#90a4ae" stroke-width="2">`;
@@ -143,20 +159,25 @@ function personSvg(card, ox, oy, opts) {
   const node = opts.lookup(card.eid);
   const x = card.x + ox, y = card.y + oy;
   const w = card.w || CARD_W;
-  const headH = 40;
+  const place = node ? opts.locationOf(node) : "";
+  // Taller when there's a location line, matching the on-screen card.
+  const headH = place ? 54 : 40;
 
   let g = `<g>`;
   g += `<rect x="${x}" y="${y}" width="${w}" height="${card.h}" rx="6" `
      + `fill="#ffffff" stroke="#dde1e6"/>`;
   g += `<path d="M${x} ${y + 6} a6 6 0 0 1 6 -6 h${w - 12} a6 6 0 0 1 6 6 `
-     + `v${headH - 6} h-${w} z" fill="#1B3A5C"/>`;
+     + `v${headH - 6} h-${w} z" fill="${node ? opts.headerColor(node) : "#1B3A5C"}"/>`;
 
   if (!node) return g + `</g>`;
 
   g += textNode(x + 11, y + 18, clip(node.full_name, 26),
                 { size: 12, weight: 700, fill: "#ffffff" });
   g += textNode(x + 11, y + 32, clip(node.job_title || "", 32),
-                { size: 10, fill: "#a8c4dc" });
+                { size: 10, fill: "#ffffff" });
+  if (place) {
+    g += textNode(x + 11, y + 45, "◎ " + clip(place, 30), { size: 9, fill: "#ffffff" });
+  }
 
   const m = node.metrics || {};
   const row1 = y + headH + 18;
