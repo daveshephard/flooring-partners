@@ -70,6 +70,12 @@ class Employee(models.Model):
     #: filtered out of every rendering path, so exclusion is reversible.
     EXCLUDED_STATUS = "__EXCLUDED__"
 
+    #: Marker written into ``raw_data`` for a row this app created because the
+    #: census export omitted someone who really works here. It is what lets
+    #: replay tell "I inserted this person last month" apart from "the source
+    #: file has started including them" — see services/corrections.py.
+    ADDED_BY_CORRECTION_KEY = "_added_by_correction"
+
     snapshot         = models.ForeignKey(CensusSnapshot, on_delete=models.CASCADE, related_name="employees")
     employee_id      = models.CharField(max_length=50)
     first_name       = models.CharField(max_length=100)
@@ -282,16 +288,25 @@ class StructureCorrection(models.Model):
     """
 
     class Kind(models.TextChoices):
-        REPARENT  = "reparent",  "Change manager"
-        SET_ROOT  = "set_root",  "Make top of org"
-        ATTRIBUTE = "attribute", "Correct attributes"
-        EXCLUDE   = "exclude",   "Exclude from chart"
+        REPARENT   = "reparent",   "Change manager"
+        SET_ROOT   = "set_root",   "Make top of org"
+        ATTRIBUTE  = "attribute",  "Correct attributes"
+        EXCLUDE    = "exclude",    "Exclude from chart"
+        # Someone who genuinely works here but is missing from the export. This
+        # is a data fix, not a plan — the person already exists, the file is
+        # wrong about it — which is why it belongs in Correct mode alongside the
+        # other four rather than in a scenario.
+        ADD_PERSON = "add_person", "Add missing person"
 
     class ReplayStatus(models.TextChoices):
         APPLIED  = "applied",  "Applied"
         DRIFTED  = "drifted",  "Applied — source value changed"
         STALE    = "stale",    "Person not in current census"
         CONFLICT = "conflict", "Could not apply"
+        # add_person only: the export has started including this person, so the
+        # correction has done its job and retires itself. Good news, and worth
+        # distinguishing from 'stale', which is the opposite situation.
+        RESOLVED = "resolved", "Source now includes this person"
 
     company     = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="corrections")
     employee_id = models.CharField(max_length=50, db_index=True)
@@ -361,6 +376,8 @@ class CorrectionReplayLog(models.Model):
     drifted_count  = models.IntegerField(default=0)
     stale_count    = models.IntegerField(default=0)
     conflict_count = models.IntegerField(default=0)
+    #: add_person corrections the source file has caught up with.
+    resolved_count = models.IntegerField(default=0)
     #: Per-correction outcomes: [{"employee_id", "kind", "status", "detail"}, ...]
     detail    = models.JSONField(default=list, blank=True)
 

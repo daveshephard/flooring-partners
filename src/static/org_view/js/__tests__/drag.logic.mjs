@@ -142,6 +142,28 @@ check("eliminating a staged TMP- addition removes both ops", () => {
   assert.equal(changeset.count(), 0);
 });
 
+check("editing a still-pending add folds into that add, not a second op", () => {
+  changeset.ops = [];
+  const tmp = changeset.nextTempId();
+  changeset.add({ op: "add", employee_id: tmp,
+                  after: { raw_supervisor_id: "E1", job_title: "Estimator" } });
+  changeset.add({ op: "attribute", employee_id: tmp, after: { department: "Ops" } });
+  changeset.add(reparent(tmp, "E2", "E1"));
+  assert.equal(changeset.count(), 1, "a TMP- row must never produce a second op");
+  assert.equal(changeset.ops[0].op, "add");
+  assert.equal(changeset.ops[0].after.department, "Ops");
+  assert.equal(changeset.ops[0].after.raw_supervisor_id, "E2");
+});
+
+check("making a still-pending add top-of-org clears its supervisor in place", () => {
+  changeset.ops = [];
+  const tmp = changeset.nextTempId();
+  changeset.add({ op: "add", employee_id: tmp, after: { raw_supervisor_id: "E1" } });
+  changeset.add({ op: "set_root", employee_id: tmp, after: {} });
+  assert.equal(changeset.count(), 1);
+  assert.equal(changeset.ops[0].after.raw_supervisor_id, "");
+});
+
 check("removing an add op also removes ops that referenced its temp id", () => {
   changeset.ops = [];
   const tmp = changeset.nextTempId();

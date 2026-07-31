@@ -20,6 +20,8 @@
   .st-drifted  { background: var(--accent-soft); color: var(--accent-light); }
   .st-stale    { background: rgba(155,157,159,0.15); color: var(--text-muted); }
   .st-conflict { background: rgba(224,112,112,0.15); color: var(--danger); }
+  .st-resolved { background: rgba(106,191,105,0.1); color: var(--success); }
+  .cr-pill.resolved .n { color: var(--success); }
 
   .cr-change { font-size: 0.8rem; }
   .cr-change .arrow { color: var(--accent-light); margin: 0 0.3rem; }
@@ -58,6 +60,9 @@
     <div class="cr-pill drifted"><span class="n">{{ latest_replay.drifted_count }}</span><span class="l">changed at source</span></div>
     <div class="cr-pill stale"><span class="n">{{ latest_replay.stale_count }}</span><span class="l">no longer applies</span></div>
     <div class="cr-pill conflict"><span class="n">{{ latest_replay.conflict_count }}</span><span class="l">need attention</span></div>
+    {% if latest_replay.resolved_count %}
+    <div class="cr-pill resolved"><span class="n">{{ latest_replay.resolved_count }}</span><span class="l">export caught up</span></div>
+    {% endif %}
   </div>
   {% if latest_replay.detail %}
   <div class="table-wrap">

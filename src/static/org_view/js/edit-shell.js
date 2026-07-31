@@ -55,6 +55,8 @@ const $ = id => document.getElementById(id);
 const $container = $("oc-page");
 const $viewport  = $("oc-viewport");
 const $modeSwitch = $("oc-mode-switch");
+const $addBtn    = $("oc-add-btn");
+const $addLabel  = $("oc-add-label");
 const $saveBar   = $("oc-save-bar");
 const $saveCount = $("oc-save-count");
 const $btnReview = $("oc-btn-review");
@@ -153,12 +155,19 @@ function rebuildTree() {
   for (const op of changeset.ops) {
     const eid = op.employee_id;
     if (op.op === "add") {
+      const vacant = op.after.is_vacant === true;
+      const named = `${op.after.first_name || ""} ${op.after.last_name || ""}`.trim();
       byId.set(eid, Object.assign(makeNode({
         employee_id: eid,
         ...op.after,
-        full_name: `${op.after.first_name || ""} ${op.after.last_name || ""}`.trim() || "(vacant)",
-        self: { cost: Number(op.after.fully_loaded_cost || op.after.annual_salary || 0), revenue: null, is_overhead: null },
-      }), { _pendingAdd: true, is_vacant: op.after.is_vacant !== false }));
+        // A Correct-mode add is a real person, so fall back to their title or
+        // badge — "(vacant)" only ever means a scenario's to-be-hired role.
+        full_name: named || (vacant ? "(vacant)" : (op.after.job_title || op.after.employee_id || eid)),
+        self: {
+          cost: Number(op.after.fully_loaded_cost || op.after.annual_salary || 0),
+          revenue: null, is_overhead: null,
+        },
+      }), { _pendingAdd: true, is_vacant: vacant }));
       continue;
     }
     const node = byId.get(eid);
@@ -256,6 +265,10 @@ function applyModeChrome() {
   $saveBar.hidden = !isEditing();
   $strip.hidden = !isEditing();
   $tray.hidden = mode !== "correct";
+  if ($addBtn) {
+    $addBtn.hidden = !isEditing();
+    $addLabel.textContent = mode === "correct" ? "Add missing person" : "Add position";
+  }
   if (!isEditing()) closePanel();
   renderSaveBar();
 }
@@ -670,14 +683,15 @@ function nodeFor(eid) {
       || null;
 }
 
-function datalistFor(field) {
+/** Distinct existing values for a field — a free consistency win on messy imports. */
+function datalistFor(field, prefix = "dl-") {
   const values = new Set();
   for (const n of chart.flattenTree(chart.fullTree)) {
     const v = (n[field] || "").trim();
     if (v) values.add(v);
   }
   if (!values.size) return "";
-  return `<datalist id="dl-${field}">`
+  return `<datalist id="${prefix}${field}">`
        + [...values].sort().map(v => `<option value="${esc(v)}"></option>`).join("")
        + `</datalist>`;
 }
@@ -731,8 +745,9 @@ function openPanel(eid) {
     html += `<div class="oc-field"><label>`
           + `<input type="checkbox" id="fld-vacant" ${node.is_vacant ? "checked" : ""}> `
           + `Vacant / to-be-hired</label></div>`;
-    html += `<button class="btn btn-secondary btn-xs" type="button" data-act="add-report">+ Add report</button>`;
   }
+  html += `<button class="btn btn-secondary btn-xs" type="button" data-act="add-report">`
+        + (mode === "correct" ? "+ Add a missing report" : "+ Add report") + `</button>`;
 
   html += `<div class="oc-panel-section">Note</div>`
     + `<div class="oc-field"><textarea id="fld-note" rows="2" `
@@ -817,7 +832,7 @@ function wirePanel(eid, node, fields) {
     if (act === "eliminate") return typedConfirm(
       `Eliminate ${node.full_name}'s position?`, "ELIMINATE",
       () => { stage({ op: "eliminate", employee_id: eid, after: {}, note: noteValue() }); closePanel(); });
-    if (act === "add-report") return stageAdd(eid);
+    if (act === "add-report") { closePanel(); return openAddForm(eid); }
   });
 
   $panel.addEventListener("keydown", e => {
@@ -889,27 +904,154 @@ function stageSetRoot(eid, node) {
   });
 }
 
-function stageAdd(supervisorId) {
-  const tmp = changeset.nextTempId();
-  stage({
-    op: "add", employee_id: tmp,
-    after: { raw_supervisor_id: supervisorId, is_vacant: true, job_title: "New position" },
-    note: "",
+/* ══════════════════════════════════════════════════════════════════
+   Add a person / role
+   ══════════════════════════════════════════════════════════════════
+   One form, both modes, because the gesture is the same even though the
+   meaning isn't:
+
+   Correct mode  — someone who genuinely works here that the export missed.
+                   The badge number matters: it's what next month's file has to
+                   match for the correction to retire itself rather than create
+                   a duplicate. No pay fields (payroll owns those), no vacancy.
+   Scenario mode — a role you're proposing. Vacant by default, pay editable,
+                   and the server assigns the NEW-n id.
+
+   The form stages a fully-populated op. The earlier flow dropped a blank
+   "New position" card on the chart and told you to go find it. */
+
+function openAddForm(supervisorId) {
+  const correcting = mode === "correct";
+  const parent = supervisorId ? nodeFor(supervisorId) : null;
+  const fields = correcting
+    ? CORRECTABLE_FIELDS
+    : CORRECTABLE_FIELDS.concat(CFG.canSeePay ? PAY_FIELDS : []);
+
+  let body = "";
+  if (correcting) {
+    body += `<div class="oc-field"><label for="add-eid">Employee ID (badge number)</label>`
+          + `<input id="add-eid" autocomplete="off" placeholder="e.g. 51234">`
+          + `<span class="oc-panel-hint" style="display:block;margin-top:0.2rem;">`
+          + `Use their real ID if you know it — that's how this fix retires itself `
+          + `once the export starts including them. Leave blank and one is generated.`
+          + `</span></div>`;
+  }
+
+  body += `<div class="oc-panel-section">Reports to</div>`;
+  body += typeaheadMarkup("add-ta", "Search for a manager…",
+                          parent ? parent.full_name : "");
+  body += `<label class="oc-panel-hint" style="display:flex;gap:0.35rem;align-items:center;">`
+        + `<input type="checkbox" id="add-root"> Top of org — reports to nobody</label>`;
+
+  body += `<div class="oc-panel-section">Details</div><div class="oc-field-grid">`;
+  for (const [f, label] of fields) {
+    const listAttr = DATALIST_FIELDS.includes(f) ? ` list="dl-add-${f}"` : "";
+    body += `<div class="oc-field"><label for="add-${f}">${esc(label)}</label>`
+          + `<input id="add-${f}" data-add-field="${f}"${listAttr}></div>`;
+  }
+  body += `</div>`;
+  body += DATALIST_FIELDS.map(f => datalistFor(f, "dl-add-")).join("");
+
+  if (!correcting) {
+    body += `<div class="oc-field"><label>`
+          + `<input type="checkbox" id="add-vacant" checked> Vacant / to-be-hired</label></div>`;
+  }
+  body += `<div class="oc-field"><label for="add-note">Note</label>`
+        + `<textarea id="add-note" rows="2" placeholder="${correcting
+            ? "Why is this person missing from the export?"
+            : "Why this role?"}"></textarea></div>`;
+
+  let chosenSupervisor = supervisorId || null;
+
+  openModal({
+    title: correcting ? "Add a person the census missed" : "Add a position",
+    body,
+    buttons: [
+      { label: "Cancel", cls: "btn-secondary", value: null },
+      { label: "Add", cls: "btn-primary", value: "add" },
+    ],
+    onMount(root) {
+      attachTypeahead(root, "add-ta", {
+        exclude: new Set(),
+        onPick(target) {
+          chosenSupervisor = target;
+          root.querySelector("#add-root").checked = false;
+        },
+      });
+      root.querySelector("#add-root").addEventListener("change", e => {
+        if (e.target.checked) {
+          chosenSupervisor = null;
+          root.querySelector("#add-ta").value = "";
+        }
+      });
+      const focusField = root.querySelector(correcting ? "#add-eid" : "#add-job_title");
+      if (focusField) focusField.focus();
+    },
+    onClose(value, root) {
+      if (value !== "add") return;
+
+      const after = {};
+      for (const [f] of fields) {
+        const v = (root.querySelector(`[data-add-field="${f}"]`) || {}).value || "";
+        if (v.trim()) after[f] = v.trim();
+      }
+      const isRoot = root.querySelector("#add-root").checked;
+      after.raw_supervisor_id = isRoot ? "" : (chosenSupervisor || "");
+
+      if (correcting) {
+        const eid = (root.querySelector("#add-eid").value || "").trim();
+        if (eid) after.employee_id = eid;
+        if (!after.first_name && !after.last_name && !after.job_title) {
+          toast("Give the person at least a name or a job title.", "err");
+          return;
+        }
+        if (!isRoot && !chosenSupervisor) {
+          toast("Pick a manager, or tick 'Top of org'.", "err");
+          return;
+        }
+      } else {
+        after.is_vacant = root.querySelector("#add-vacant").checked;
+        if (!after.job_title) {
+          toast("Give the position a job title.", "err");
+          return;
+        }
+      }
+
+      const tmp = changeset.nextTempId();
+      stage({
+        op: "add", employee_id: tmp, after,
+        note: (root.querySelector("#add-note").value || "").trim(),
+      });
+      if (chosenSupervisor) chart.expandNode(chosenSupervisor);
+      rerender();
+      chart.navigateToEmployee(tmp);
+      toast(correcting ? "Person staged — press Save to add them."
+                       : "Position staged — press Save to add it.");
+    },
   });
-  closePanel();
-  toast("Vacant position staged — click it to fill in the details.");
 }
 
 /* ── Typeahead over api_employee_search ──────────────────────────── */
-function wireTypeahead(eid, node) {
-  const input = $panel.querySelector("#oc-ta");
-  const res = $panel.querySelector("#oc-ta-res");
+
+/** Markup for a manager picker. Shared by the side panel and the add form. */
+function typeaheadMarkup(id, placeholder, value) {
+  return `<div class="oc-field oc-typeahead-wrap">`
+       + `<input type="text" id="${id}" placeholder="${esc(placeholder)}" autocomplete="off"`
+       + ` value="${esc(value || "")}">`
+       + `<div class="oc-typeahead-results" id="${id}-res"></div></div>`;
+}
+
+/**
+ * @param root      element containing the input
+ * @param exclude   Set of employee_ids that can't be picked (self + descendants)
+ * @param onPick    (employee_id, row) => void
+ */
+function attachTypeahead(root, id, { exclude, onPick }) {
+  const input = root.querySelector("#" + id);
+  const res = root.querySelector("#" + id + "-res");
   if (!input) return;
   let timer = null;
-  // Exclude the subject and its descendants client-side, so an invalid move
-  // simply can't be selected.
-  const bad = invalidTargetsFor(chart.fullTree, eid);
-  const branch = CFG.branchRootId;
+  const bad = exclude || new Set();
 
   input.addEventListener("input", () => {
     clearTimeout(timer);
@@ -931,24 +1073,38 @@ function wireTypeahead(eid, node) {
     const item = e.target.closest("[data-pick]");
     if (!item) return;
     const target = item.dataset.pick;
-    if (branch) {
-      // Mirror the server check so the UI can't offer what the API will reject.
-      if (!branchMembers(chart.fullTree, branch).has(target)) {
-        toast("That manager is outside the part of the org you can edit.", "err");
-        return;
-      }
+    // Mirror the server's branch check so the UI can't offer what the API rejects.
+    if (CFG.branchRootId && !branchMembers(chart.fullTree, CFG.branchRootId).has(target)) {
+      toast("That manager is outside the part of the org you can edit.", "err");
+      return;
     }
     res.classList.remove("open");
-    stage({
-      op: "reparent", employee_id: eid, after: { raw_supervisor_id: target },
-      _before: { raw_supervisor_id: node.raw_supervisor_id ?? null },
-      note: noteValue(),
-    });
-    closePanel();
-    chart.expandNode(target);
-    rerender();
-    chart.navigateToEmployee(eid);
+    input.value = item.querySelector("div").textContent;
+    onPick(target);
   });
+}
+
+function wireTypeahead(eid, node) {
+  attachTypeahead($panel, "oc-ta", {
+    // Exclude the subject and its descendants, so an invalid move simply can't
+    // be selected in the first place.
+    exclude: invalidTargetsFor(chart.fullTree, eid),
+    onPick(target) {
+      stage(reparentOp(eid, target, node, noteValue()));
+      closePanel();
+      chart.expandNode(target);
+      rerender();
+      chart.navigateToEmployee(eid);
+    },
+  });
+}
+
+function reparentOp(eid, target, node, note) {
+  return {
+    op: "reparent", employee_id: eid, after: { raw_supervisor_id: target },
+    _before: { raw_supervisor_id: node ? node.raw_supervisor_id ?? null : null },
+    note: note || "",
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1099,8 +1255,17 @@ function describe(op) {
       }).join("; ");
     case "exclude":   return "removed from the chart (row kept, reversible)";
     case "eliminate": return "position eliminated; reports move up a level";
-    case "add":       return `new ${op.after.is_vacant === false ? "" : "vacant "}position under `
-                           + `${nameOf(op.after.raw_supervisor_id) || "nobody"}`;
+    case "add": {
+      const who = `${op.after.first_name || ""} ${op.after.last_name || ""}`.trim()
+                || op.after.job_title || "new position";
+      const under = nameOf(op.after.raw_supervisor_id) || "nobody (top of org)";
+      if (mode === "correct") {
+        const badge = op.after.employee_id ? ` as ${op.after.employee_id}` : " (id generated)";
+        return `missing from the census → added${badge}, reporting to ${under}`;
+      }
+      return `new ${op.after.is_vacant === false ? "" : "vacant "}position `
+           + `"${who}" under ${under}`;
+    }
     default:          return "";
   }
 }
@@ -1376,6 +1541,10 @@ async function boot() {
       if (b) switchMode(b.dataset.mode);
     });
   }
+
+  // Toolbar add: no card need be selected first. Pre-fills the manager from the
+  // current selection when there is one.
+  if ($addBtn) $addBtn.addEventListener("click", () => openAddForm(selectedId));
 
   changeset.configure({
     target: mode === "scenario" ? "scenario" : "corrections",

@@ -68,6 +68,24 @@ export const changeset = {
   },
 
   add(op) {
+    // Editing or moving a row that is still only a staged `add` folds into that
+    // add rather than becoming a second op. Without this the server would get a
+    // reparent/attribute naming a TMP- id that doesn't exist yet, and quietly
+    // drop it — the exact silent-loss failure this design exists to remove.
+    const pendingAdd = this.ops.find(
+      o => o.op === "add" && o.employee_id === op.employee_id);
+    if (pendingAdd && op.op !== "add" && op.op !== "eliminate") {
+      if (op.op === "reparent") {
+        pendingAdd.after.raw_supervisor_id = (op.after || {}).raw_supervisor_id || "";
+      } else if (op.op === "set_root") {
+        pendingAdd.after.raw_supervisor_id = "";
+      } else if (op.op === "attribute") {
+        Object.assign(pendingAdd.after, op.after || {});
+      }
+      if (op.note) pendingAdd.note = op.note;
+      return this._changed();
+    }
+
     const i = this.ops.findIndex(o => o.op === op.op && o.employee_id === op.employee_id);
 
     if (op.op === "attribute" && i >= 0) {

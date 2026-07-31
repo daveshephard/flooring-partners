@@ -512,6 +512,105 @@ class CorrectionsTests(OrgFixtureMixin, TestCase):
         self.assertEqual(snap.status, CensusSnapshot.Status.ACTIVE)
         self.assertTrue(snap.is_current)
 
+    def _add_person(self, employee_id="51234", first="Mia", last="New", sup="E2"):
+        return self.correction(
+            self.company, employee_id, StructureCorrection.Kind.ADD_PERSON, {},
+            {"first_name": first, "last_name": last, "job_title": "Estimator",
+             "raw_supervisor_id": sup},
+        )
+
+    def test_add_person_inserts_and_replays(self):
+        c = self._add_person()
+        status, _ = C.apply_correction(c, self.snap)
+        self.assertEqual(status, StructureCorrection.ReplayStatus.APPLIED)
+
+        snap_b = self.make_snapshot(self.company, label="Q2")
+        log = C.replay_corrections(snap_b)
+        self.assertEqual(log.applied_count, 1)
+        emp = Employee.objects.get(snapshot=snap_b, employee_id="51234")
+        self.assertEqual(emp.full_name, "Mia New")
+        self.assertEqual(emp.supervisor.employee_id, "E2")
+        self.assertIn("51234", _flatten_ids(strip_aggregation(build_tree(snap_b.id))))
+
+    def test_add_person_resolves_when_the_export_catches_up(self):
+        """The whole point of the resolution rule: no duplicate, and it retires."""
+        c = self._add_person()
+        C.apply_correction(c, self.snap)
+
+        rows = self.ROWS + [("51234", "Mia", "New", "E2", "Estimator", "90000", None)]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+
+        c.refresh_from_db()
+        self.assertEqual(log.resolved_count, 1)
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.RESOLVED)
+        self.assertFalse(c.is_active, "job done — stop replaying it")
+        self.assertEqual(
+            Employee.objects.filter(snapshot=snap_b, employee_id="51234").count(), 1)
+        # The source row survives untouched — it is real data now.
+        self.assertNotIn(
+            Employee.ADDED_BY_CORRECTION_KEY,
+            Employee.objects.get(snapshot=snap_b, employee_id="51234").raw_data)
+
+    def test_add_person_resolves_on_a_name_match_under_a_different_badge(self):
+        """Guards the case where the user had to invent an id.
+
+        06 §6 flags exactly this: a generated id can't match the export, so we
+        fall back to the name before creating a second copy of a real person.
+        """
+        c = self._add_person(employee_id="ADDED-1")
+        C.apply_correction(c, self.snap)
+
+        rows = self.ROWS + [("77777", "Mia", "New", "E2", "Estimator", "90000", None)]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+
+        c.refresh_from_db()
+        self.assertEqual(log.resolved_count, 1)
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.RESOLVED)
+        self.assertFalse(
+            Employee.objects.filter(snapshot=snap_b, employee_id="ADDED-1").exists())
+        self.assertEqual(
+            Employee.objects.filter(snapshot=snap_b, last_name="New").count(), 1)
+
+    def test_add_person_conflicts_when_the_manager_is_gone(self):
+        c = self._add_person(sup="E5")
+        C.apply_correction(c, self.snap)
+        rows = [r for r in self.ROWS if r[0] not in ("E5", "E6")]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+        c.refresh_from_db()
+        self.assertEqual(log.conflict_count, 1)
+        self.assertTrue(c.is_active)
+        self.assertFalse(
+            Employee.objects.filter(snapshot=snap_b, employee_id="51234").exists())
+
+    def test_revert_add_person_deletes_our_row_and_reparents_its_reports(self):
+        c = self._add_person()
+        C.apply_correction(c, self.snap)
+        C.resolve_supervisor_fks(self.snap)
+        # Someone was moved under the person we added.
+        Employee.objects.filter(snapshot=self.snap, employee_id="E4").update(
+            raw_supervisor_id="51234")
+
+        C.revert_correction(c, self.snap)
+        c.refresh_from_db()
+        self.assertFalse(c.is_active)
+        self.assertFalse(
+            Employee.objects.filter(snapshot=self.snap, employee_id="51234").exists())
+        # Their report must not be orphaned by the revert.
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E4").raw_supervisor_id, "E2")
+
+    def test_revert_add_person_never_deletes_a_real_source_row(self):
+        c = self._add_person()
+        rows = self.ROWS + [("51234", "Mia", "New", "E2", "Estimator", "90000", None)]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        C.revert_correction(c, snap_b)
+        self.assertTrue(
+            Employee.objects.filter(snapshot=snap_b, employee_id="51234").exists(),
+            "the export owns this row now — reverting must not destroy real data")
+
     def test_management_command_dry_run(self):
         self._reparent("E3", "E2", "E5")
         call_command("replay_corrections", company="Flooring Partners", dry_run=True)
@@ -577,11 +676,76 @@ class ChangesetTests(OrgFixtureMixin, TestCase):
         self.assertEqual(resp.status_code, 422)
         self.assertIn("bogus_field", resp.json()["errors"][0]["error"])
 
-    def test_correct_mode_rejects_add_and_eliminate(self):
-        for op in ("add", "eliminate"):
-            resp = self.commit([{"op": op, "employee_id": "E3", "after": {}}])
-            self.assertEqual(resp.status_code, 422, op)
-            self.assertIn("Correct mode", resp.json()["errors"][0]["error"])
+    def test_correct_mode_rejects_eliminate_but_allows_add(self):
+        """The asymmetry is deliberate.
+
+        Adding is a data fix — the person works here and the export missed them.
+        Eliminating is a plan: proposing a real role stop existing belongs in a
+        scenario, not in a correction to the census.
+        """
+        resp = self.commit([{"op": "eliminate", "employee_id": "E3", "after": {}}])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("Correct mode", resp.json()["errors"][0]["error"])
+
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"employee_id": "51234", "first_name": "Mia", "last_name": "New",
+                      "job_title": "Estimator", "raw_supervisor_id": "E2"},
+            "note": "missing from the March export",
+        }])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["id_map"], {"TMP-1": "51234"})
+        emp = Employee.objects.get(snapshot=self.snap, employee_id="51234")
+        self.assertEqual(emp.full_name, "Mia New")
+        self.assertEqual(emp.supervisor.employee_id, "E2")
+        self.assertTrue(emp.raw_data[Employee.ADDED_BY_CORRECTION_KEY])
+
+    def test_correct_mode_add_rejects_a_duplicate_badge(self):
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"employee_id": "E3", "first_name": "Imp", "last_name": "Ostor",
+                      "raw_supervisor_id": "E2"},
+        }])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("already in this census", resp.json()["errors"][0]["error"])
+
+    def test_correct_mode_add_requires_a_name_or_title(self):
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"employee_id": "51234", "raw_supervisor_id": "E2"},
+        }])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("name or a job title", resp.json()["errors"][0]["error"])
+
+    def test_correct_mode_add_generates_an_id_when_none_given(self):
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"first_name": "No", "last_name": "Badge", "raw_supervisor_id": "E2"},
+        }])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["id_map"], {"TMP-1": "ADDED-1"})
+
+    def test_correct_mode_add_rejects_pay_fields(self):
+        """Pay comes from the payroll export, not from someone typing it in."""
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"employee_id": "51234", "first_name": "Mia", "last_name": "New",
+                      "annual_salary": "90000", "raw_supervisor_id": "E2"},
+        }])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("annual_salary", resp.json()["errors"][0]["error"])
+
+    def test_add_then_reparent_someone_under_them_in_one_batch(self):
+        resp = self.commit([
+            {"op": "add", "employee_id": "TMP-1",
+             "after": {"employee_id": "51234", "first_name": "Mia", "last_name": "New",
+                       "job_title": "Ops Director", "raw_supervisor_id": "E1"}},
+            {"op": "reparent", "employee_id": "E2", "after": {"raw_supervisor_id": "TMP-1"}},
+        ])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E2").raw_supervisor_id,
+            "51234", "the reparent must resolve the temp id to the assigned badge")
 
     def test_correct_mode_rejects_pay_fields(self):
         resp = self.commit([

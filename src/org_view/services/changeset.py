@@ -22,12 +22,16 @@ TARGET_CORRECTIONS = "corrections"
 TARGET_SCENARIO = "scenario"
 
 #: Ops the editor can stage, and which targets accept them.
+#:
+#: Correct mode accepts `add` but not `eliminate`, and the asymmetry is the
+#: point: adding is a data fix (the person works here, the export missed them),
+#: whereas eliminating is a plan — you are proposing that a real role stop
+#: existing, which belongs in a scenario. Scenario mode has no `exclude`, since
+#: excluding a duplicate row is a census correction, not a reorg.
 OPS_BY_TARGET = {
-    TARGET_CORRECTIONS: {"reparent", "set_root", "attribute", "exclude"},
-    TARGET_SCENARIO: {"reparent", "set_root", "attribute", "exclude", "add", "eliminate"},
+    TARGET_CORRECTIONS: {"reparent", "set_root", "attribute", "exclude", "add"},
+    TARGET_SCENARIO: {"reparent", "set_root", "attribute", "add", "eliminate"},
 }
-#: Scenario mode has no notion of "exclude" — that's a census correction.
-OPS_BY_TARGET[TARGET_SCENARIO].discard("exclude")
 
 #: Only these two members of EDITABLE_FIELDS reveal pay.
 PAY_FIELDS = ("annual_salary", "fully_loaded_cost")
@@ -113,6 +117,14 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
     sim = dict(parent_map)
     eliminated: set[str] = set()
     branch = _branch_members(parent_map, branch_root) if branch_root else None
+    # Correct-mode adds carry a real badge number, which must not collide with a
+    # row already in the census or with another add in the same batch. Excluded
+    # rows count as taken — the id is still in the table.
+    existing_ids = (
+        set(Employee.objects.filter(snapshot=snapshot).values_list("employee_id", flat=True))
+        if target == TARGET_CORRECTIONS and snapshot else set()
+    )
+    claimed_ids: set[str] = set()
 
     def err(i, op, eid, msg):
         errors.append({"index": i, "op": op, "employee_id": eid, "error": msg})
@@ -130,10 +142,10 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
 
         # 1. Op allowed for the target.
         if name not in allowed_ops:
-            if name in ("add", "eliminate") and target == TARGET_CORRECTIONS:
+            if name == "eliminate" and target == TARGET_CORRECTIONS:
                 err(i, name, eid,
-                    "Correct mode can't add or eliminate people — that's a plan, not a "
-                    "correction. Use Scenario mode.")
+                    "Correct mode can't eliminate a role — proposing that a real position "
+                    "stop existing is a plan, not a correction. Use Scenario mode.")
             elif name == "exclude" and target == TARGET_SCENARIO:
                 err(i, name, eid,
                     "Scenario mode can't exclude rows — eliminate the position instead.")
@@ -192,11 +204,31 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
 
         elif name == "add":
             _check_fields(i, name, eid, after, whitelist, can_see_pay, err,
-                          extra_keys={"raw_supervisor_id", "is_vacant", "note"})
+                          extra_keys={"raw_supervisor_id", "is_vacant", "note", "employee_id"})
             new_sup = str(after.get("raw_supervisor_id") or "").strip()
             if new_sup and new_sup not in sim:
-                err(i, name, eid, f"Manager {new_sup} is not in this scenario.")
+                err(i, name, eid, f"Manager {new_sup} is not in this "
+                                  f"{'scenario' if target == TARGET_SCENARIO else 'census'}.")
                 continue
+            if target == TARGET_CORRECTIONS:
+                # The badge number matters here in a way it doesn't in a scenario:
+                # it is what next month's export has to match for the correction
+                # to retire itself instead of creating a duplicate.
+                real_id = str(after.get("employee_id") or "").strip()
+                if real_id and real_id in existing_ids:
+                    err(i, name, real_id,
+                        f"{real_id} is already in this census — correct that row instead "
+                        f"of adding a second one.")
+                    continue
+                if real_id and real_id in claimed_ids:
+                    err(i, name, real_id, f"{real_id} is added twice in this batch.")
+                    continue
+                if real_id:
+                    claimed_ids.add(real_id)
+                if not any(str(after.get(f) or "").strip()
+                           for f in ("first_name", "last_name", "job_title")):
+                    err(i, name, eid, "Give the person at least a name or a job title.")
+                    continue
             sim[eid] = new_sup or None
 
         elif name == "eliminate":
@@ -328,20 +360,71 @@ def _current_snapshot_id(company, *, target, scenario=None):
     return snap.id if snap else None
 
 
+def _next_added_id(snapshot) -> str:
+    """A fallback id when the user doesn't know the person's badge number.
+
+    Worth avoiding: a made-up id can't match next month's export, so the
+    correction will keep re-inserting the person alongside their real row until
+    someone notices. ``_apply_add_person`` falls back to a name match to catch
+    that, but a real badge number is always better.
+    """
+    taken = set(
+        Employee.objects.filter(snapshot__company=snapshot.company,
+                                employee_id__startswith="ADDED-")
+        .values_list("employee_id", flat=True)
+    )
+    n = 1
+    while f"ADDED-{n}" in taken:
+        n += 1
+    return f"ADDED-{n}"
+
+
 def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
     kind_for = {
         "reparent": StructureCorrection.Kind.REPARENT,
         "set_root": StructureCorrection.Kind.SET_ROOT,
         "attribute": StructureCorrection.Kind.ATTRIBUTE,
         "exclude": StructureCorrection.Kind.EXCLUDE,
+        "add": StructureCorrection.Kind.ADD_PERSON,
     }
     applied = 0
+    id_map: dict[str, str] = {}
+
+    def resolve(value):
+        value = str(value or "").strip()
+        return id_map.get(value, value)
+
     for raw in ops:
         name = raw["op"]
-        eid = str(raw["employee_id"]).strip()
+        eid = resolve(raw["employee_id"])
         after = dict(raw.get("after") or {})
         note = (raw.get("note") or "").strip()
         kind = kind_for[name]
+
+        if name == "add":
+            real_id = str(after.pop("employee_id", "") or "").strip() or _next_added_id(snapshot)
+            payload = {k: _coerce(k, v) for k, v in after.items()
+                       if k in corrections_svc.ADDABLE_FIELDS}
+            payload["raw_supervisor_id"] = resolve(after.get("raw_supervisor_id")) or None
+            correction, _ = StructureCorrection.objects.update_or_create(
+                company=company, employee_id=real_id,
+                kind=StructureCorrection.Kind.ADD_PERSON,
+                defaults={
+                    "before": {}, "after": payload, "note": note, "is_active": True,
+                    "created_by": user, "first_applied_snapshot": snapshot,
+                    "last_applied_snapshot": snapshot,
+                    "replay_status": StructureCorrection.ReplayStatus.APPLIED,
+                    "replay_detail": "",
+                },
+            )
+            status, detail = corrections_svc.apply_correction(correction, snapshot)
+            if status != StructureCorrection.ReplayStatus.APPLIED:
+                correction.replay_status = status
+                correction.replay_detail = detail
+                correction.save(update_fields=["replay_status", "replay_detail", "updated_at"])
+            id_map[str(raw["employee_id"]).strip()] = real_id
+            applied += 1
+            continue
 
         emp = Employee.objects.filter(snapshot=snapshot, employee_id=eid).first()
         if emp is None:
@@ -351,7 +434,7 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
             after = {k: _coerce(k, v) for k, v in after.items()
                      if k in corrections_svc.CORRECTABLE_FIELDS}
         elif name == "reparent":
-            after = {"raw_supervisor_id": str(after.get("raw_supervisor_id")).strip()}
+            after = {"raw_supervisor_id": resolve(after.get("raw_supervisor_id"))}
         else:
             after = {}
 
@@ -395,7 +478,7 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
         applied += 1
 
     corrections_svc.resolve_supervisor_fks(snapshot)
-    return applied, {}
+    return applied, id_map
 
 
 def _commit_scenario(ops, *, scenario) -> tuple[int, dict]:

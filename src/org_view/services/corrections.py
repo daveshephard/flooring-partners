@@ -35,12 +35,21 @@ CORRECTABLE_FIELDS = (
     "pay_type", "entity",
 )
 
+#: Fields an ``add_person`` correction may set on the row it creates — the same
+#: twelve. Pay still comes from the payroll export rather than from someone
+#: typing it into the chart.
+ADDABLE_FIELDS = CORRECTABLE_FIELDS
+
 _KIND = StructureCorrection.Kind
 _STATUS = StructureCorrection.ReplayStatus
 
-#: Replay order. Reparent after set_root so a correction that moves someone under
-#: a new root can't transiently reference a supervisor set_root is about to clear.
-_REPLAY_ORDER = (_KIND.EXCLUDE, _KIND.SET_ROOT, _KIND.REPARENT, _KIND.ATTRIBUTE)
+#: Replay order. add_person first, so a reparent can point at somebody this same
+#: replay is about to insert. Reparent after set_root so a correction that moves
+#: someone under a new root can't transiently reference a supervisor set_root is
+#: about to clear.
+_REPLAY_ORDER = (
+    _KIND.ADD_PERSON, _KIND.EXCLUDE, _KIND.SET_ROOT, _KIND.REPARENT, _KIND.ATTRIBUTE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ def capture_before(employee: Employee, kind: str, after: dict) -> dict:
         }
     if kind == _KIND.ATTRIBUTE:
         return {f: getattr(employee, f) for f in after if f in CORRECTABLE_FIELDS}
+    # add_person has no `before` — the whole point is that the row didn't exist.
     return {}
 
 
@@ -116,6 +126,10 @@ def apply_correction(correction: StructureCorrection, snapshot: CensusSnapshot) 
     emp = Employee.objects.filter(
         snapshot=snapshot, employee_id=correction.employee_id,
     ).first()
+
+    if correction.kind == _KIND.ADD_PERSON:
+        return _apply_add_person(correction, snapshot, emp)
+
     if emp is None:
         return _STATUS.STALE, f"{correction.employee_id} is not in this census."
 
@@ -165,6 +179,68 @@ def apply_correction(correction: StructureCorrection, snapshot: CensusSnapshot) 
     return _STATUS.CONFLICT, f"Unknown correction kind '{kind}'."
 
 
+def _apply_add_person(correction, snapshot, emp) -> tuple[str, str]:
+    """Insert a person the export omitted, or retire the correction if it caught up.
+
+    Resolution rule, in order:
+      - a row with this id exists and we did *not* create it  -> ("resolved", …)
+      - a row with this person's name exists under a different id -> ("resolved", …)
+        The export presumably assigned them a real badge number; ours would be a
+        duplicate, so stand down and let the source win.
+      - a row with this id exists and carries our marker      -> refresh it, ("applied", …)
+      - no row                                                -> create it, ("applied", "")
+    """
+    after = dict(correction.after or {})
+    fields = {f: after.get(f, "") for f in ADDABLE_FIELDS if f in after}
+    supervisor_id = (after.get("raw_supervisor_id") or "").strip() or None
+
+    if emp is not None and not (emp.raw_data or {}).get(Employee.ADDED_BY_CORRECTION_KEY):
+        return (_STATUS.RESOLVED,
+                f"The census now includes {correction.employee_id}; this correction is no "
+                f"longer needed.")
+
+    first, last = fields.get("first_name", ""), fields.get("last_name", "")
+    if emp is None and (first or last):
+        # Filtered in Python, not with .exclude(raw_data__<key>=True): a JSON key
+        # that is absent compares as NULL, and exclude() then drops the very rows
+        # we are looking for.
+        twin = next(
+            (
+                e for e in Employee.objects.filter(
+                    snapshot=snapshot, first_name=first, last_name=last,
+                ).exclude(employee_id=correction.employee_id)
+                if not (e.raw_data or {}).get(Employee.ADDED_BY_CORRECTION_KEY)
+            ),
+            None,
+        )
+        if twin is not None:
+            return (_STATUS.RESOLVED,
+                    f"The census now includes {twin.full_name} as {twin.employee_id}; "
+                    f"adding {correction.employee_id} would duplicate them.")
+
+    if supervisor_id and not Employee.objects.filter(
+        snapshot=snapshot, employee_id=supervisor_id,
+    ).exists():
+        return _STATUS.CONFLICT, f"Manager {supervisor_id} is not in this census."
+
+    if emp is None:
+        Employee.objects.create(
+            snapshot=snapshot,
+            employee_id=correction.employee_id,
+            raw_supervisor_id=supervisor_id,
+            raw_data={Employee.ADDED_BY_CORRECTION_KEY: True},
+            **fields,
+        )
+        return _STATUS.APPLIED, ""
+
+    # Ours from a previous run — keep it in step with the correction.
+    for key, value in fields.items():
+        setattr(emp, key, value)
+    emp.raw_supervisor_id = supervisor_id
+    emp.save(update_fields=list(fields) + ["raw_supervisor_id"])
+    return _STATUS.APPLIED, ""
+
+
 def _drift(emp: Employee, before: dict, fields) -> tuple[str, str]:
     """Compare the row's current values against what the correction expected."""
     changed = []
@@ -206,6 +282,21 @@ def revert_correction(correction: StructureCorrection, snapshot: CensusSnapshot)
     emp = Employee.objects.filter(
         snapshot=snapshot, employee_id=correction.employee_id,
     ).first()
+
+    if correction.kind == _KIND.ADD_PERSON:
+        # Only delete a row we created. If the export has since started carrying
+        # this person, the row is real data and reverting must not destroy it.
+        if emp is not None and (emp.raw_data or {}).get(Employee.ADDED_BY_CORRECTION_KEY):
+            Employee.objects.filter(
+                snapshot=snapshot, raw_supervisor_id=emp.employee_id,
+            ).update(raw_supervisor_id=emp.raw_supervisor_id)
+            emp.delete()
+        correction.is_active = False
+        correction.replay_detail = "Reverted."
+        correction.save(update_fields=["is_active", "replay_detail", "updated_at"])
+        resolve_supervisor_fks(snapshot)
+        return
+
     if emp is not None:
         before = correction.before or {}
         fields = []
@@ -268,7 +359,10 @@ def replay_corrections(snapshot: CensusSnapshot, user=None) -> CorrectionReplayL
     # tree_builder.
     _resolve_replay_cycles(snapshot, corrections, outcomes)
 
-    counts = {_STATUS.APPLIED: 0, _STATUS.DRIFTED: 0, _STATUS.STALE: 0, _STATUS.CONFLICT: 0}
+    counts = {
+        _STATUS.APPLIED: 0, _STATUS.DRIFTED: 0, _STATUS.STALE: 0,
+        _STATUS.CONFLICT: 0, _STATUS.RESOLVED: 0,
+    }
     detail_rows = []
     for c in corrections:
         status, detail = outcomes.get(c.id, (_STATUS.CONFLICT, "Not evaluated."))
@@ -279,7 +373,9 @@ def replay_corrections(snapshot: CensusSnapshot, user=None) -> CorrectionReplayL
             c.last_applied_snapshot = snapshot
             if c.first_applied_snapshot_id is None:
                 c.first_applied_snapshot = snapshot
-        if status == _STATUS.STALE:
+        # Stale: the person is gone. Resolved: the export caught up. Either way
+        # the correction has nothing left to do — keep the record, stop replaying.
+        if status in (_STATUS.STALE, _STATUS.RESOLVED):
             c.is_active = False
         c.save(update_fields=[
             "replay_status", "replay_detail", "last_applied_snapshot",
@@ -303,6 +399,7 @@ def replay_corrections(snapshot: CensusSnapshot, user=None) -> CorrectionReplayL
         drifted_count=counts[_STATUS.DRIFTED],
         stale_count=counts[_STATUS.STALE],
         conflict_count=counts[_STATUS.CONFLICT],
+        resolved_count=counts[_STATUS.RESOLVED],
         detail=detail_rows,
     )
 

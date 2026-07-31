@@ -42,6 +42,10 @@
       <button type="button" class="oc-mode-btn{% if mode == 'correct' %} active{% endif %}" data-mode="correct" aria-pressed="{% if mode == 'correct' %}true{% else %}false{% endif %}">Correct</button>
       <button type="button" class="oc-mode-btn{% if mode == 'scenario' %} active{% endif %}" data-mode="scenario" aria-pressed="{% if mode == 'scenario' %}true{% else %}false{% endif %}">Scenario</button>
     </div>
+    <button type="button" class="oc-filter-btn" id="oc-add-btn" hidden
+            title="Add someone the census missed, or a new role">
+      <span class="ficon">&plus;</span> <span id="oc-add-label">Add</span>
+    </button>
     {% endif %}
 
     <div class="oc-search-wrap">

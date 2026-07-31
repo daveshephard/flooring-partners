@@ -912,6 +912,12 @@ def _correction_labels(correction, names):
                 "top of org — reports to nobody")
     if kind == K.EXCLUDE:
         return ("on the chart", "excluded from the chart")
+    if kind == K.ADD_PERSON:
+        name = f"{after.get('first_name', '')} {after.get('last_name', '')}".strip()
+        title = after.get("job_title") or ""
+        who = " — ".join(p for p in (name, title) if p) or correction.employee_id
+        return ("missing from the census",
+                f"added as {who}, reporting to {_who(names, after.get('raw_supervisor_id'))}")
     parts_b = ", ".join(f"{k}: {v!r}" for k, v in before.items()) or "—"
     parts_a = ", ".join(f"{k}: {v!r}" for k, v in after.items()) or "—"
     return parts_b, parts_a
@@ -931,7 +937,8 @@ def _corrections_payload(company, snap, include_inactive=True):
         StructureCorrection.ReplayStatus.CONFLICT: 0,
         StructureCorrection.ReplayStatus.DRIFTED: 1,
         StructureCorrection.ReplayStatus.STALE: 2,
-        StructureCorrection.ReplayStatus.APPLIED: 3,
+        StructureCorrection.ReplayStatus.RESOLVED: 3,
+        StructureCorrection.ReplayStatus.APPLIED: 4,
     }
     rows = sorted(qs, key=lambda c: (rank.get(c.replay_status, 9), -(c.id or 0)))
 
@@ -969,6 +976,7 @@ def _corrections_payload(company, snap, include_inactive=True):
             "drifted_count": latest.drifted_count,
             "stale_count": latest.stale_count,
             "conflict_count": latest.conflict_count,
+            "resolved_count": latest.resolved_count,
             "detail": latest.detail,
         }
 
