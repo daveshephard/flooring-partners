@@ -58,6 +58,7 @@ const $viewport  = $("oc-viewport");
 const $modeSwitch = $("oc-mode-switch");
 const $addBtn    = $("oc-add-btn");
 const $addLabel  = $("oc-add-label");
+const $groupsBtn = $("oc-groups-btn");
 const $saveBar   = $("oc-save-bar");
 const $saveCount = $("oc-save-count");
 const $btnReview = $("oc-btn-review");
@@ -727,6 +728,27 @@ function openPanel(eid) {
         : "")
     + `</div><div class="oc-panel-body">`;
 
+  // Grouping sits above the attribute fields, not below them — it was previously
+  // twelve inputs down the panel, where nobody found it.
+  const kidCount = (node.children || []).length;
+  const mine = chart.getGroups().filter(g => {
+    const r = chart.resolvedGroup(g.id);
+    return (r && r.anchor === eid) || (g.member_ids || []).includes(eid);
+  });
+  if (kidCount > 1 || mine.length) {
+    html += `<div class="oc-panel-section">Team boxes</div><div class="oc-field">`;
+    if (kidCount > 1) {
+      html += `<button class="btn btn-secondary btn-xs" type="button" data-act="group">`
+            + `Box up ${kidCount} reports…</button> `;
+    }
+    if (mine.length) {
+      html += `<div class="oc-panel-hint" style="margin-top:0.35rem;">In: `
+            + mine.map(g => `<a data-edit-group="${esc(g.id)}">${esc(g.name)}</a>`).join(", ")
+            + `</div>`;
+    }
+    html += `</div>`;
+  }
+
   html += `<div class="oc-panel-section">Reports to</div>`
     + `<div class="oc-field oc-typeahead-wrap">`
     + `<input type="text" id="oc-ta" placeholder="Search for a manager…" autocomplete="off">`
@@ -751,18 +773,6 @@ function openPanel(eid) {
   }
   html += `<button class="btn btn-secondary btn-xs" type="button" data-act="add-report">`
         + (mode === "correct" ? "+ Add a missing report" : "+ Add report") + `</button>`;
-
-  html += ` <button class="btn btn-secondary btn-xs" type="button" data-act="group">`
-        + ((node.children || []).length > 1 ? "Group reports…" : "New group…") + `</button>`;
-  const mine = chart.getGroups().filter(g => {
-    const r = chart.resolvedGroup(g.id);
-    return (r && r.anchor === eid) || (g.member_ids || []).includes(eid);
-  });
-  if (mine.length) {
-    html += `<div class="oc-panel-hint" style="margin-top:0.35rem;">Teams: `
-          + mine.map(g => `<a data-edit-group="${esc(g.id)}">${esc(g.name)}</a>`).join(", ")
-          + `</div>`;
-  }
 
   html += `<div class="oc-panel-section">Note</div>`
     + `<div class="oc-field"><textarea id="fld-note" rows="2" `
@@ -941,6 +951,91 @@ const ACCENTS = [
 async function refreshGroups() {
   const r = await api("/groups/");
   if (r.ok && r.data) chart.setGroups(r.data.groups);
+  updateGroupsButton();
+}
+
+function updateGroupsButton() {
+  const badge = $("oc-groups-count");
+  if (!badge) return;
+  const n = chart.getGroups().length;
+  badge.hidden = n === 0;
+  badge.textContent = n;
+}
+
+/**
+ * The home for grouping.
+ *
+ * It used to be reachable only from a card's side panel, which meant you had to
+ * be in an edit mode, know to click a card, and scroll past twelve attribute
+ * fields to find it — and in View mode there was no way in at all, despite
+ * groups being a reading aid. This is the discoverable entry point: every box,
+ * from anywhere, in any mode.
+ */
+function openGroupManager() {
+  const groups = chart.getGroups();
+
+  let body;
+  if (!groups.length) {
+    body = `<p>A team box folds several people into one collapsible card showing `
+         + `headcount and cost — useful when a manager has more direct reports `
+         + `than you can read at once.</p>`
+         + `<p class="oc-panel-hint" style="margin-top:0.5rem;">Boxes are `
+         + `decorative: they change no reporting line, and everyone can see them.</p>`;
+  } else {
+    body = `<table class="oc-diff-table"><thead><tr>`
+         + `<th>Team</th><th>People</th><th>Sits under</th><th></th></tr></thead><tbody>`;
+    for (const g of groups) {
+      const r = chart.resolvedGroup(g.id);
+      const anchor = r ? nodeFor(r.anchor) : null;
+      const drawn = r ? r.memberIds.length : 0;
+      const total = (g.member_ids || []).length;
+      body += `<tr>`
+        + `<td><span class="oc-swatch accent-${esc(g.accent)}"></span>${esc(g.name)}</td>`
+        + `<td>${drawn}${drawn !== total ? ` <span class="oc-panel-hint">of ${total} on chart</span>` : ""}</td>`
+        + `<td>${anchor ? esc(anchor.full_name) : `<span class="oc-panel-hint">not on the chart</span>`}</td>`
+        + `<td style="white-space:nowrap;">`
+        + `<button class="btn btn-secondary btn-xs" data-goto-group="${esc(g.id)}">Show</button> `
+        + `<button class="btn btn-secondary btn-xs" data-open-group="${esc(g.id)}">Edit</button>`
+        + `</td></tr>`;
+    }
+    body += `</tbody></table>`;
+  }
+
+  openModal({
+    title: "Team boxes",
+    body,
+    buttons: [
+      { label: "Close", cls: "btn-secondary", value: null },
+      { label: "New team…", cls: "btn-primary", value: "new" },
+    ],
+    onMount(root, close) {
+      root.addEventListener("click", e => {
+        const open = e.target.closest("[data-open-group]");
+        if (open) {
+          const id = open.dataset.openGroup;
+          close(null);
+          return openGroupForm({ groupId: id });
+        }
+        const show = e.target.closest("[data-goto-group]");
+        if (show) {
+          const r = chart.resolvedGroup(show.dataset.gotoGroup);
+          close(null);
+          if (r && r.memberIds.length) {
+            chart.expandNode(r.anchor);
+            chart.renderTree();
+            chart.navigateToEmployee(r.memberIds[0]);
+          } else {
+            toast("None of that team's members are on the chart right now.", "err");
+          }
+        }
+      });
+    },
+    onClose(value) {
+      // Seed from the selected card when there is one, so "New team" from a
+      // manager's card still offers their reports in one click.
+      if (value === "new") openGroupForm({ parentId: selectedId });
+    },
+  });
 }
 
 function groupById(id) {
@@ -1093,8 +1188,9 @@ function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {})
       });
       if (!r.ok) return toast((r.data && r.data.error) || "Couldn't save the group.", "err");
       chart.setGroups(r.data.groups);
+      updateGroupsButton();
       chart.renderTree();
-      toast(group ? "Group updated." : `Grouped ${members.length} into “${name}”.`, "ok");
+      toast(group ? "Team updated." : `Boxed ${members.length} into “${name}”.`, "ok");
     },
   });
 }
@@ -1104,6 +1200,7 @@ function deleteGroup(id, name) {
     const r = await api(`/groups/${id}/delete/`, { body: "{}" });
     if (!r.ok) return toast("Couldn't ungroup.", "err");
     chart.setGroups(r.data.groups);
+    updateGroupsButton();
     chart.renderTree();
     toast("Ungrouped — the members are back as ordinary cards.", "ok");
   }, "The box disappears and its members go back to being ordinary cards. "
@@ -1136,6 +1233,7 @@ async function addToGroup(employeeId, groupId) {
   });
   if (!r.ok) return toast((r.data && r.data.error) || "Couldn't add to that group.", "err");
   chart.setGroups(r.data.groups);
+  updateGroupsButton();
   rerender();
   toast(`Added to “${group.name}”.`, "ok");
 }
@@ -1738,7 +1836,9 @@ function openModal({ title, body, buttons, narrow, onMount, onClose, onButton })
     if (e.target === root) close(null);
   });
   document.addEventListener("keydown", onKey, true);
-  if (onMount) onMount(root);
+  // onMount gets `close` so a handler can dismiss the modal through its own
+  // teardown — removing the element directly would leak the keydown listener.
+  if (onMount) onMount(root, close);
   const first = root.querySelector("input, select, textarea, button");
   if (first) first.focus();
   return { close };
@@ -1981,6 +2081,7 @@ async function boot() {
   // Toolbar add: no card need be selected first. Pre-fills the manager from the
   // current selection when there is one.
   if ($addBtn) $addBtn.addEventListener("click", () => openAddForm(selectedId));
+  if ($groupsBtn) $groupsBtn.addEventListener("click", openGroupManager);
 
   changeset.configure({
     target: mode === "scenario" ? "scenario" : "corrections",

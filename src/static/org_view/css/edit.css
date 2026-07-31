@@ -529,6 +529,19 @@ button.oc-tile:hover { border-color: var(--accent); }
 }
 
 /* ── Group editor ──────────────────────────────────────────────────── */
+.oc-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.4rem;
+  vertical-align: baseline;
+}
+.oc-swatch.accent-sand  { background: #8A7659; }
+.oc-swatch.accent-sage  { background: #5F7A5C; }
+.oc-swatch.accent-slate { background: #4E6472; }
+.oc-swatch.accent-plum  { background: #7A5A6E; }
+
 .oc-accent-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 
 .oc-accent {

@@ -46,6 +46,11 @@
             title="Add someone the census missed, or a new role">
       <span class="ficon">&plus;</span> <span id="oc-add-label">Add</span>
     </button>
+    {# Grouping is a reading aid, so it stays reachable in every mode. #}
+    <button type="button" class="oc-filter-btn" id="oc-groups-btn"
+            title="Box people into named teams to declutter a wide layer">
+      <span class="ficon">&#9707;</span> Teams <span class="oc-filter-count" id="oc-groups-count" hidden></span>
+    </button>
     {% endif %}
 
     <div class="oc-search-wrap">

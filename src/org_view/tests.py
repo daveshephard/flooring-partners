@@ -1381,6 +1381,21 @@ class ChartPageTests(OrgFixtureMixin, TestCase):
             self.client.login(username=username, password="pw")
             self.assertNotContains(self.chart(), "oc-mode-switch")
 
+    def test_teams_button_is_reachable_in_every_mode(self):
+        """Grouping was previously buried in the side panel, which meant it was
+        unreachable in View mode entirely. It's a reading aid — it has to have a
+        toolbar entry point wherever an edit role can see the chart."""
+        self.make_user("admin8", self.company, role="admin")
+        self.client.login(username="admin8", password="pw")
+        for mode in ("view", "correct"):
+            self.assertContains(self.chart(mode=mode), 'id="oc-groups-btn"', msg_prefix=mode)
+
+        # Read-only roles can see boxes but not build them, so no button.
+        self.make_user("viewer4", self.company, role="viewer")
+        self.client.logout()
+        self.client.login(username="viewer4", password="pw")
+        self.assertNotContains(self.chart(), 'id="oc-groups-btn"')
+
     def test_chart_page_config_has_no_pay_for_restricted(self):
         self.make_user("restricted4", self.company, role="restricted")
         self.client.login(username="restricted4", password="pw")
