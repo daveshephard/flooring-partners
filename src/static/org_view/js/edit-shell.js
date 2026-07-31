@@ -834,6 +834,7 @@ function closePanel() {
   if (!$panel) return;
   $panel.hidden = true;
   $panel.innerHTML = "";
+  panelCtx = null;
   const wasSelected = selectedId;
   selectedId = null;
   if (wasSelected) rerenderCards();
@@ -843,30 +844,58 @@ function rerenderCards() {
   if (chart.viewRoot) chart.renderTree();
 }
 
-function wirePanel(eid, node, fields) {
-  $panel.querySelector(".oc-panel-close").addEventListener("click", closePanel);
+/* What the open panel is about. Held in module state rather than captured in a
+   closure, because the panel's handlers are bound once — see below. */
+let panelCtx = null;
+
+/**
+ * The panel's click/keydown handlers are bound **once**, at load.
+ *
+ * `$panel` is a persistent element whose innerHTML is swapped on each open, so
+ * binding inside openPanel() stacked a fresh handler every time and left the
+ * old ones live: after opening the panel five times, one click on Apply staged
+ * five times and one click on a button that opens a modal stacked five modals.
+ * Delegation plus `panelCtx` is what keeps a click meaning exactly one thing.
+ */
+function initPanel() {
+  if (!$panel) return;
 
   $panel.addEventListener("click", e => {
+    if (e.target.closest(".oc-panel-close")) return closePanel();
+
     const goto = e.target.closest("[data-goto]");
     if (goto) { chart.navigateToEmployee(goto.dataset.goto); return; }
+
     const editGroup = e.target.closest("[data-edit-group]");
-    if (editGroup) { closePanel(); return openGroupForm({ groupId: editGroup.dataset.editGroup }); }
+    if (editGroup) {
+      const id = editGroup.dataset.editGroup;
+      closePanel();
+      return openGroupForm({ groupId: id });
+    }
+
     const btn = e.target.closest("[data-act]");
-    if (!btn) return;
-    const act = btn.dataset.act;
-    if (act === "cancel") return closePanel();
-    if (act === "apply") return applyPanel(eid, node, fields);
-    if (act === "set-root") return stageSetRoot(eid, node);
-    if (act === "exclude") return openRemovalForm(eid, node, "exclude");
-    if (act === "eliminate") return openRemovalForm(eid, node, "eliminate");
-    if (act === "add-report") { closePanel(); return openAddForm(eid); }
-    if (act === "group") { closePanel(); return openGroupForm({ parentId: eid }); }
+    if (!btn || !panelCtx) return;
+    const { eid, node, fields } = panelCtx;
+    switch (btn.dataset.act) {
+      case "cancel":     return closePanel();
+      case "apply":      return applyPanel(eid, node, fields);
+      case "set-root":   return stageSetRoot(eid, node);
+      case "exclude":    return openRemovalForm(eid, node, "exclude");
+      case "eliminate":  return openRemovalForm(eid, node, "eliminate");
+      case "add-report": closePanel(); return openAddForm(eid);
+      case "group":      closePanel(); return openGroupForm({ parentId: eid });
+    }
   });
 
   $panel.addEventListener("keydown", e => {
     if (e.key === "Escape") { e.stopPropagation(); closePanel(); }
   });
+}
 
+function wirePanel(eid, node, fields) {
+  // Only the freshly-rendered children get their own listeners; the panel's own
+  // are bound once in initPanel().
+  panelCtx = { eid, node, fields };
   wireTypeahead(eid, node);
   wireRawData(eid);
 }
@@ -1195,16 +1224,22 @@ function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {})
   });
 }
 
-function deleteGroup(id, name) {
-  typedConfirm(`Ungroup “${name}”?`, "UNGROUP", async () => {
-    const r = await api(`/groups/${id}/delete/`, { body: "{}" });
-    if (!r.ok) return toast("Couldn't ungroup.", "err");
-    chart.setGroups(r.data.groups);
-    updateGroupsButton();
-    chart.renderTree();
-    toast("Ungrouped — the members are back as ordinary cards.", "ok");
-  }, "The box disappears and its members go back to being ordinary cards. "
-   + "Nobody's reporting line changes.");
+/** No typed confirm here: nothing is lost, and re-making the box is a minute's
+ *  work. Ceremony should match consequence. */
+async function deleteGroup(id, name) {
+  const answer = await confirmModal({
+    title: `Ungroup “${name}”?`,
+    body: "The box disappears and its members go back to being ordinary cards. "
+        + "Nobody's reporting line changes, and no data is lost.",
+    confirmLabel: "Ungroup",
+  });
+  if (answer !== "confirm") return;
+  const r = await api(`/groups/${id}/delete/`, { body: "{}" });
+  if (!r.ok) return toast("Couldn't ungroup.", "err");
+  chart.setGroups(r.data.groups);
+  updateGroupsButton();
+  chart.renderTree();
+  toast("Ungrouped — the members are back as ordinary cards.", "ok");
 }
 
 chart.hooks.onGroupEdit = gid => openGroupForm({ groupId: gid });
@@ -2090,6 +2125,7 @@ async function boot() {
   });
 
   applyModeChrome();
+  initPanel();
   installDrag();
   initExportMenu();
 

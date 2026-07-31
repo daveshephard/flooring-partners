@@ -61,3 +61,6 @@ jobs:
 
     - name: Drag + changeset logic
       run: node src/static/org_view/js/__tests__/drag.logic.mjs
+
+    - name: Edit shell static checks
+      run: node src/static/org_view/js/__tests__/shell.static.mjs
