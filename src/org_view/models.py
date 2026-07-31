@@ -380,9 +380,14 @@ class ChartGroup(models.Model):
     all. That's also why groups save immediately instead of going through the
     pending changeset — there is nothing to review.
 
+    Membership is free-form: put whoever you like in a box. The members do not
+    have to share a manager, and a member drawn inside a box is not drawn again
+    at their natural position, so the box genuinely relocates them on screen.
+    Because that can make the picture disagree with the reporting lines, a box
+    holding people who don't report to its anchor says so on its face.
+
     Keyed by ``employee_id`` like corrections, so a grouping survives a census
-    re-upload. Members who aren't in the current census, or who no longer report
-    to ``parent_employee_id``, are simply not drawn.
+    re-upload. Members who aren't in the current census are simply not drawn.
     """
 
     class Accent(models.TextChoices):
@@ -392,10 +397,12 @@ class ChartGroup(models.Model):
         PLUM  = "plum",  "Plum"
 
     company            = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="chart_groups")
-    #: The manager whose children this box sits among.
-    parent_employee_id = models.CharField(max_length=50, db_index=True)
+    #: Where the box hangs on the chart. Blank means "work it out from the
+    #: members" — the client anchors it under their common manager, so the usual
+    #: case (box five of the CEO's reps under the CEO) needs no thought at all.
+    parent_employee_id = models.CharField(max_length=50, db_index=True, blank=True, default="")
     name               = models.CharField(max_length=100)
-    #: employee_ids of the direct reports folded into this box.
+    #: employee_ids in this box. Any people — they need not share a manager.
     member_ids         = models.JSONField(default=list, blank=True)
     accent             = models.CharField(max_length=20, choices=Accent.choices, default=Accent.SAND)
     collapsed_by_default = models.BooleanField(
@@ -409,8 +416,11 @@ class ChartGroup(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["parent_employee_id", "name"]
-        unique_together = [("company", "parent_employee_id", "name")]
+        ordering = ["name"]
+        # Names are unique per company rather than per manager: a box can move
+        # anchor as its membership changes, so "unique under this manager" would
+        # be a constraint that quietly stops holding.
+        unique_together = [("company", "name")]
         indexes = [models.Index(fields=["company", "parent_employee_id"])]
 
     def __str__(self):

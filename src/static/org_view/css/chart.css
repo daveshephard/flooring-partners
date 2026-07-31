@@ -662,6 +662,18 @@
   color: #8A7659;
 }
 
+.oc-group-note {
+  margin: 0 0.7rem 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.15rem;
+  background: rgba(230,81,0,0.12);
+  color: #8A4B12;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
 .oc-group-footer {
   background: rgba(138,118,89,0.12);
   border-top: 1px solid #D8CBB4;

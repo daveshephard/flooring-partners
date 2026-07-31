@@ -524,6 +524,36 @@ button.oc-tile:hover { border-color: var(--accent); }
 .oc-accent:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .oc-accent input { accent-color: var(--accent); }
 
+.oc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+  min-height: 1.6rem;
+}
+
+.oc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.12rem 0.3rem 0.12rem 0.55rem;
+  font-size: 0.74rem;
+}
+
+.oc-chip button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+}
+.oc-chip button:hover { color: var(--danger); }
+
 .oc-group-picker {
   max-height: 300px;
   overflow-y: auto;

@@ -919,25 +919,40 @@ def api_save_chart_group(request, slug):
         return _error("Invalid JSON.", 400)
 
     name = str(body.get("name") or "").strip()[:100]
+    # Blank is legitimate: the client anchors the box under the members' common
+    # manager, so "box these five people" needs no further decision.
     parent = str(body.get("parent_employee_id") or "").strip()
     members = [str(m).strip() for m in (body.get("member_ids") or []) if str(m).strip()]
+    members = list(dict.fromkeys(members))          # de-dupe, keep order
     accent = body.get("accent") or ChartGroup.Accent.SAND
     if accent not in ChartGroup.Accent.values:
         accent = ChartGroup.Accent.SAND
     if not name:
         return _error("Give the group a name.", 400)
-    if not parent:
-        return _error("A group has to belong to a manager.", 400)
     if not members:
         return _error("Pick at least one person for the group.", 400)
+    if parent and parent in members:
+        return _error("A group can't be placed under one of its own members.", 400)
+
+    snap = _active_snapshot(company)
+    if snap:
+        present = set(
+            Employee.objects.filter(snapshot=snap, employee_id__in=members + [parent])
+            .exclude(employee_status=Employee.EXCLUDED_STATUS)
+            .values_list("employee_id", flat=True)
+        )
+        missing = [m for m in members if m not in present]
+        if missing:
+            return _error(f"Not in this census: {', '.join(missing[:5])}.", 400)
+        if parent and parent not in present:
+            return _error(f"{parent} is not in this census.", 400)
 
     # A branch-restricted editor can only group inside their own branch.
     if perm.branch_root_employee_id:
-        snap = _active_snapshot(company)
         allowed = _subtree_ids(
             build_tree(snap.id, root_employee_id=perm.branch_root_employee_id)
         ) if snap else set()
-        if parent not in allowed or any(m not in allowed for m in members):
+        if any(m not in allowed for m in members) or (parent and parent not in allowed):
             return _error("That group is outside the part of the org you can edit.", 403)
 
     group = None
@@ -946,12 +961,24 @@ def api_save_chart_group(request, slug):
         if not group:
             return _error("Group not found.", 404)
 
+    clash = ChartGroup.objects.filter(company=company, name=name)
+    if group:
+        clash = clash.exclude(pk=group.pk)
+    if clash.exists():
+        return _error(f"There's already a group called '{name}'.", 409)
+
+    # One box per person — otherwise the chart would have to draw them twice.
+    overlapping = [
+        g for g in ChartGroup.objects.filter(company=company).exclude(pk=group.pk if group else None)
+        if set(g.member_ids or []) & set(members)
+    ]
+    if overlapping:
+        who = sorted(set(overlapping[0].member_ids or []) & set(members))[:3]
+        return _error(
+            f"{', '.join(who)} already belongs to '{overlapping[0].name}'. "
+            f"Remove them from that group first.", 409)
+
     if group is None:
-        clash = ChartGroup.objects.filter(
-            company=company, parent_employee_id=parent, name=name,
-        ).first()
-        if clash:
-            return _error(f"There's already a group called '{name}' here.", 409)
         group = ChartGroup(company=company, created_by=request.user)
 
     group.parent_employee_id = parent

@@ -751,15 +751,16 @@ function openPanel(eid) {
   html += `<button class="btn btn-secondary btn-xs" type="button" data-act="add-report">`
         + (mode === "correct" ? "+ Add a missing report" : "+ Add report") + `</button>`;
 
-  if ((node.children || []).length > 1) {
-    html += ` <button class="btn btn-secondary btn-xs" type="button" data-act="group">`
-          + `Group reports…</button>`;
-    const mine = chart.getGroups().filter(g => g.parent_employee_id === eid);
-    if (mine.length) {
-      html += `<div class="oc-panel-hint" style="margin-top:0.35rem;">Teams here: `
-            + mine.map(g => `<a data-edit-group="${esc(g.id)}">${esc(g.name)}</a>`).join(", ")
-            + `</div>`;
-    }
+  html += ` <button class="btn btn-secondary btn-xs" type="button" data-act="group">`
+        + ((node.children || []).length > 1 ? "Group reports…" : "New group…") + `</button>`;
+  const mine = chart.getGroups().filter(g => {
+    const r = chart.resolvedGroup(g.id);
+    return (r && r.anchor === eid) || (g.member_ids || []).includes(eid);
+  });
+  if (mine.length) {
+    html += `<div class="oc-panel-hint" style="margin-top:0.35rem;">Teams: `
+          + mine.map(g => `<a data-edit-group="${esc(g.id)}">${esc(g.name)}</a>`).join(", ")
+          + `</div>`;
   }
 
   html += `<div class="oc-panel-section">Note</div>`
@@ -945,29 +946,31 @@ function groupById(id) {
   return chart.getGroups().find(g => String(g.id) === String(id)) || null;
 }
 
-/** Open the editor for an existing group, or create one under `parentId`. */
+/**
+ * Open the editor for an existing group, or start a new one.
+ *
+ * Membership is free-form — search for anyone and add them. `parentId`, when
+ * given, just seeds the picker with that manager's direct reports, which is the
+ * common case (box the CEO's five commercial reps under the CEO). Where the box
+ * *hangs* is worked out from the members unless you override it.
+ */
 function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {}) {
   const group = groupId ? groupById(groupId) : null;
-  const parent = nodeFor(group ? group.parent_employee_id : parentId);
-  if (!parent) {
-    toast("Pick a manager first — a group collects one person's direct reports.", "err");
-    return;
-  }
-  const reports = parent.children || [];
-  if (!reports.length) {
-    toast(`${parent.full_name} has no direct reports to group.`, "err");
-    return;
-  }
+  const seedFrom = nodeFor(group ? group.parent_employee_id : parentId);
 
-  // Someone already in another group under this manager can't be in two boxes.
+  // One box per person, so anyone already spoken for is off the table.
   const takenElsewhere = new Map();
   for (const g of chart.getGroups()) {
-    if (g.parent_employee_id !== parent.employee_id) continue;
     if (group && String(g.id) === String(group.id)) continue;
     for (const m of g.member_ids || []) takenElsewhere.set(m, g.name);
   }
 
-  const chosen = new Set(group ? group.member_ids : preselect);
+  const chosen = new Map();   // employee_id -> label
+  for (const id of (group ? group.member_ids : preselect)) {
+    const n = nodeFor(id);
+    chosen.set(id, n ? `${n.full_name} (${id})` : id);
+  }
+  let placeUnder = group ? (group.parent_employee_id || "") : "";
 
   let body = `<div class="oc-field"><label for="grp-name">Group name</label>`
     + `<input id="grp-name" value="${esc(group ? group.name : "")}" `
@@ -981,48 +984,99 @@ function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {})
         + `<span>${esc(label)}</span></label>`).join("")
     + `</div></div>`;
 
-  body += `<div class="oc-panel-section">`
-    + `Who's in it — ${esc(parent.full_name)}'s reports</div>`;
-  body += `<div class="oc-group-picker">`;
-  for (const child of reports) {
-    const taken = takenElsewhere.get(child.employee_id);
-    const below = Math.max(0, (child.metrics.headcount || 1) - 1);
-    body += `<label class="oc-group-pick${taken ? " taken" : ""}">`
-      + `<input type="checkbox" data-member="${esc(child.employee_id)}"`
-      + (chosen.has(child.employee_id) ? " checked" : "")
-      + (taken ? " disabled" : "") + `>`
-      + `<span><span class="pick-name">${esc(child.full_name)}</span>`
-      + `<span class="pick-title">${esc(child.job_title || "—")}`
-      + (below ? ` · ${below} below` : "")
-      + (taken ? ` · already in “${esc(taken)}”` : "") + `</span></span></label>`;
+  body += `<div class="oc-panel-section">Who's in it</div>`;
+  body += typeaheadMarkup("grp-ta", "Search for anyone to add…", "");
+  if (seedFrom && (seedFrom.children || []).length) {
+    body += `<button type="button" class="btn btn-secondary btn-xs" id="grp-add-reports">`
+          + `Add all ${seedFrom.children.length} of ${esc(seedFrom.full_name)}'s reports`
+          + `</button>`;
   }
-  body += `</div>`;
+  body += `<div class="oc-chips" id="grp-chips"></div>`;
+
+  body += `<div class="oc-panel-section">Where it sits</div>`;
+  body += typeaheadMarkup("grp-place", "Choose a manager (optional)",
+                          placeUnder ? (nodeFor(placeUnder) || {}).full_name || placeUnder : "");
+  body += `<p class="oc-panel-hint">Leave blank and the box hangs under whoever the `
+        + `members report to. People in the box are drawn there instead of their `
+        + `usual spot — reporting lines don't change, and the box says so when its `
+        + `members report elsewhere.</p>`;
+
   body += `<label class="oc-panel-hint" style="display:flex;gap:0.35rem;align-items:center;margin-top:0.5rem;">`
     + `<input type="checkbox" id="grp-collapsed"`
     + ((group ? group.collapsed_by_default : true) ? " checked" : "")
     + `> Start collapsed</label>`;
-  body += `<p class="oc-panel-hint" style="margin-top:0.5rem;">`
-    + `Grouping is decorative — it changes no reporting line, and saves straight away.</p>`;
+  body += `<p class="oc-panel-hint" style="margin-top:0.4rem;">`
+    + `Grouping is decorative and saves straight away — it isn't part of your `
+    + `unsaved changes.</p>`;
 
   const buttons = [{ label: "Cancel", cls: "btn-secondary", value: null }];
   if (group) buttons.push({ label: "Ungroup", cls: "btn-danger", value: "delete" });
   buttons.push({ label: group ? "Save group" : "Create group", cls: "btn-primary", value: "save" });
 
   openModal({
-    title: group ? `Edit “${group.name}”` : "Group reports",
+    title: group ? `Edit “${group.name}”` : "New group",
     body,
     buttons,
     onMount(root) {
-      const first = root.querySelector("#grp-name");
-      if (first) first.focus();
+      const $chips = root.querySelector("#grp-chips");
+
+      function drawChips() {
+        $chips.innerHTML = chosen.size
+          ? [...chosen].map(([id, label]) =>
+              `<span class="oc-chip">${esc(label)}`
+              + `<button type="button" data-drop="${esc(id)}" aria-label="Remove">&times;</button>`
+              + `</span>`).join("")
+          : `<span class="oc-panel-hint">Nobody yet — search above, or add a `
+            + `manager's reports in one go.</span>`;
+      }
+      drawChips();
+
+      $chips.addEventListener("click", e => {
+        const b = e.target.closest("[data-drop]");
+        if (!b) return;
+        chosen.delete(b.dataset.drop);
+        drawChips();
+      });
+
+      function addPerson(id) {
+        if (chosen.has(id)) return;
+        const taken = takenElsewhere.get(id);
+        if (taken) return toast(`Already in “${taken}” — remove them from it first.`, "err");
+        const n = nodeFor(id);
+        chosen.set(id, n ? `${n.full_name} (${id})` : id);
+        drawChips();
+      }
+
+      attachTypeahead(root, "grp-ta", {
+        exclude: new Set(takenElsewhere.keys()),
+        onPick(target) {
+          addPerson(target);
+          root.querySelector("#grp-ta").value = "";
+        },
+      });
+      attachTypeahead(root, "grp-place", {
+        exclude: new Set(),
+        onPick(target) { placeUnder = target; },
+      });
+      const $place = root.querySelector("#grp-place");
+      $place.addEventListener("input", () => {
+        if (!$place.value.trim()) placeUnder = "";
+      });
+
+      const addAll = root.querySelector("#grp-add-reports");
+      if (addAll) {
+        addAll.addEventListener("click", () => {
+          for (const c of seedFrom.children) addPerson(c.employee_id);
+        });
+      }
+      root.querySelector("#grp-name").focus();
     },
     async onClose(value, root) {
       if (value === "delete") return deleteGroup(group.id, group.name);
       if (value !== "save") return;
 
       const name = (root.querySelector("#grp-name").value || "").trim();
-      const members = [...root.querySelectorAll("[data-member]:checked")]
-        .map(cb => cb.dataset.member);
+      const members = [...chosen.keys()];
       const accent = (root.querySelector("[name=grp-accent]:checked") || {}).value || "sand";
 
       if (!name) return toast("Give the group a name.", "err");
@@ -1031,7 +1085,7 @@ function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {})
       const r = await api("/groups/save/", {
         body: JSON.stringify({
           id: group ? group.id : null,
-          parent_employee_id: parent.employee_id,
+          parent_employee_id: placeUnder,
           name, member_ids: members, accent,
           collapsed_by_default: root.querySelector("#grp-collapsed").checked,
         }),
@@ -1057,23 +1111,18 @@ function deleteGroup(id, name) {
 
 chart.hooks.onGroupEdit = gid => openGroupForm({ groupId: gid });
 
-/** Dropping a card onto a group box files them into it. */
+/** Dropping a card onto a group box files them into it — visually only. */
 async function addToGroup(employeeId, groupId) {
   const group = groupById(groupId);
   if (!group) return;
-  const node = nodeFor(employeeId);
   const members = new Set(group.member_ids || []);
   if (members.has(employeeId)) return;
 
-  // The box only draws children of its own manager, so a card dragged in from
-  // elsewhere has to be reparented too — otherwise it would vanish.
-  const parent = findParentIn(chart.fullTree, employeeId);
-  if (!parent || parent.employee_id !== group.parent_employee_id) {
-    if (!isEditing()) {
-      toast("Switch to Correct or Scenario mode to move someone into that team.", "err");
-      return;
-    }
-    stage(reparentOp(employeeId, group.parent_employee_id, node, ""));
+  const taken = chart.getGroups().find(
+    g => String(g.id) !== String(groupId) && (g.member_ids || []).includes(employeeId));
+  if (taken) {
+    toast(`Already in “${taken.name}” — remove them from that group first.`, "err");
+    return;
   }
 
   members.add(employeeId);

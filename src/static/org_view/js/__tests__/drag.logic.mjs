@@ -174,6 +174,73 @@ check("removing an add op also removes ops that referenced its temp id", () => {
   assert.equal(changeset.count(), 0, "the dangling reparent must go too");
 });
 
+/* ── Decorative grouping boxes ───────────────────────────────────── */
+import { resolveGroups, lowestCommonAncestor, buildParentMap } from "../groups.js";
+
+/* fixture shape: E1 ─ E2 ─ {E3, E4, E5 ─ {E6, E7}}
+                     └ E8 ─ E9                          */
+
+check("a box of one manager's reports anchors under that manager", () => {
+  const idx = resolveGroups(tree, [{ id: 1, member_ids: ["E3", "E4"] }]);
+  assert.equal(idx.resolved.get("1").anchor, "E2");
+  assert.deepEqual(idx.resolved.get("1").memberIds, ["E3", "E4"]);
+});
+
+check("a box spanning managers anchors at their lowest common ancestor", () => {
+  // E3 reports to E2, E9 reports to E8 — the only shared ancestor is the root.
+  const idx = resolveGroups(tree, [{ id: 1, member_ids: ["E3", "E9"] }]);
+  assert.equal(idx.resolved.get("1").anchor, "E1");
+});
+
+check("an explicit anchor overrides the derived one", () => {
+  const idx = resolveGroups(tree, [
+    { id: 1, parent_employee_id: "E1", member_ids: ["E3", "E4"] }]);
+  assert.equal(idx.resolved.get("1").anchor, "E1");
+});
+
+check("members absent from the census are dropped", () => {
+  const idx = resolveGroups(tree, [{ id: 1, member_ids: ["E3", "NOBODY"] }]);
+  assert.deepEqual(idx.resolved.get("1").memberIds, ["E3"]);
+});
+
+check("a person is claimed by only one box, first declared wins", () => {
+  const idx = resolveGroups(tree, [
+    { id: 1, member_ids: ["E3", "E4"] },
+    { id: 2, member_ids: ["E4", "E5"] },
+  ]);
+  assert.deepEqual(idx.resolved.get("1").memberIds, ["E3", "E4"]);
+  assert.deepEqual(idx.resolved.get("2").memberIds, ["E5"]);
+  assert.equal(idx.memberOf.get("E4"), "1");
+});
+
+check("a member that would swallow its own anchor is dropped", () => {
+  // Anchor at E5 with E2 (E5's own grandparent) inside would recurse forever.
+  const idx = resolveGroups(tree, [
+    { id: 1, parent_employee_id: "E5", member_ids: ["E2", "E6"] }]);
+  assert.deepEqual(idx.resolved.get("1").memberIds, ["E6"]);
+});
+
+check("a box with nothing left to draw is skipped entirely", () => {
+  const idx = resolveGroups(tree, [{ id: 1, member_ids: ["GONE"] }]);
+  assert.equal(idx.resolved.size, 0);
+  assert.equal(idx.byAnchor.size, 0);
+});
+
+check("byAnchor groups several boxes under the same manager", () => {
+  const idx = resolveGroups(tree, [
+    { id: 1, member_ids: ["E3"] },
+    { id: 2, member_ids: ["E4"] },
+  ]);
+  assert.equal(idx.byAnchor.get("E2").length, 2);
+});
+
+check("lowestCommonAncestor handles a single id and disjoint ids", () => {
+  const { parentOf } = buildParentMap(tree);
+  assert.equal(lowestCommonAncestor(parentOf, ["E6"]), "E6");
+  assert.equal(lowestCommonAncestor(parentOf, []), null);
+  assert.equal(lowestCommonAncestor(parentOf, ["E2", "E8"]), "E1");
+});
+
 if (process.exitCode) {
   console.error("drag logic tests FAILED");
 } else {

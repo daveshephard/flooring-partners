@@ -1070,12 +1070,46 @@ class ChartGroupTests(OrgFixtureMixin, TestCase):
         self.assertEqual(self.save(member_ids=[]).status_code, 400)
         self.assertFalse(ChartGroup.objects.exists())
 
-    def test_group_name_must_be_unique_under_one_manager(self):
+    def test_group_name_must_be_unique_per_company(self):
         self.assertEqual(self.save().status_code, 200)
-        self.assertEqual(self.save(member_ids=["E3"]).status_code, 409)
-        # …but the same name under a different manager is fine.
         self.assertEqual(
-            self.save(parent_employee_id="E1", member_ids=["E5"]).status_code, 200)
+            self.save(parent_employee_id="E1", member_ids=["E5"]).status_code, 409)
+
+    def test_membership_is_free_form_and_needs_no_anchor(self):
+        """Members need not share a manager, and the anchor is optional.
+
+        E3/E4 report to E2 and E6 reports to E5 — a box can still hold all three,
+        and the client works out where to hang it.
+        """
+        resp = self.save(parent_employee_id="", member_ids=["E3", "E4", "E6"])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        g = ChartGroup.objects.get()
+        self.assertEqual(g.parent_employee_id, "")
+        self.assertEqual(g.member_ids, ["E3", "E4", "E6"])
+        # Still nothing structural has moved.
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E6").raw_supervisor_id, "E5")
+
+    def test_a_person_can_only_be_in_one_box(self):
+        self.assertEqual(self.save().status_code, 200)
+        resp = self.save(name="Another team", member_ids=["E4", "E6"])
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("already belongs to", resp.json()["error"])
+
+    def test_group_rejects_members_missing_from_the_census(self):
+        resp = self.save(member_ids=["E3", "GHOST"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("GHOST", resp.json()["error"])
+
+    def test_group_cannot_be_placed_under_one_of_its_own_members(self):
+        resp = self.save(parent_employee_id="E3", member_ids=["E3", "E4"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(ChartGroup.objects.exists())
+
+    def test_explicit_anchor_is_kept(self):
+        resp = self.save(parent_employee_id="E1", member_ids=["E3", "E4"])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(ChartGroup.objects.get().parent_employee_id, "E1")
 
     def test_updating_a_group_replaces_its_membership(self):
         gid = self.save().json()["id"]

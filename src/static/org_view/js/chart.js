@@ -9,6 +9,8 @@
  */
 "use strict";
 
+import { resolveGroups } from "./groups.js";
+
 export const CFG = window.ORG_VIEW || {};
 
 const SLUG      = CFG.companySlug;
@@ -340,6 +342,9 @@ export function renderTree() {
     if ($tree) $tree.innerHTML = "";
     return;
   }
+  // Anchors depend on where people currently sit, so resolve them against the
+  // tree as it stands — including any optimistic, still-unsaved moves.
+  indexGroups();
   $tree.innerHTML = renderNodeGroup(viewRoot);
   $loading.style.display = "none";
   if (hooks.afterRender) hooks.afterRender();
@@ -369,6 +374,8 @@ function renderNodeGroup(node) {
 /* ── Decorative grouping boxes ───────────────────────────────────── */
 
 let chartGroups = [];
+/** Rebuilt on every render: where each box hangs, and who is inside one. */
+let groupIndex = { byAnchor: new Map(), memberOf: new Map(), resolved: new Map() };
 
 /** Replace the set of grouping boxes. Purely presentational — no data changes. */
 export function setGroups(groups) {
@@ -377,13 +384,15 @@ export function setGroups(groups) {
     // Decluttering only helps if the box starts closed.
     if (!g.collapsed_by_default) expandedSet.add(groupKey(g.id));
   }
+  indexGroups();
 }
 
 export function getGroups() { return chartGroups; }
 export function groupKey(id) { return "grp:" + id; }
+export function resolvedGroup(id) { return groupIndex.resolved.get(String(id)) || null; }
 
-function groupsFor(parentId) {
-  return chartGroups.filter(g => g.parent_employee_id === parentId);
+function indexGroups() {
+  groupIndex = resolveGroups(fullTree, chartGroups);
 }
 
 export function toggleGroup(id) {
@@ -393,28 +402,27 @@ export function toggleGroup(id) {
   renderTree();
 }
 
-/** A manager's children, with any grouped siblings folded into boxes. */
+/** A node's children, with grouped people pulled out into boxes. */
 function renderChildren(node) {
-  const groups = groupsFor(node.employee_id);
-  if (!groups.length) return node.children.map(renderNodeGroup).join("");
+  const boxes = groupIndex.byAnchor.get(node.employee_id) || [];
+  const anyGroups = boxes.length || groupIndex.memberOf.size;
+  if (!anyGroups) return node.children.map(renderNodeGroup).join("");
 
-  const claimed = new Set();
   let html = "";
-  for (const g of groups) {
-    const ids = new Set(g.member_ids || []);
-    // Members who left this manager — or the census — simply aren't drawn.
-    const members = node.children.filter(c => ids.has(c.employee_id));
-    if (!members.length) continue;
-    members.forEach(m => claimed.add(m.employee_id));
-    html += renderGroupBox(g, members);
+  for (const g of boxes) {
+    // Members can live anywhere in the tree, so look them up globally rather
+    // than among this node's children.
+    const members = g.memberIds.map(id => findNode(fullTree, id)).filter(Boolean);
+    if (members.length) html += renderGroupBox(g, members, node.employee_id);
   }
+  // Anyone in a box — this one or another — is drawn there, not here.
   for (const ch of node.children) {
-    if (!claimed.has(ch.employee_id)) html += renderNodeGroup(ch);
+    if (!groupIndex.memberOf.has(ch.employee_id)) html += renderNodeGroup(ch);
   }
   return html;
 }
 
-function renderGroupBox(group, members) {
+function renderGroupBox(group, members, anchorId) {
   const key = groupKey(group.id);
   const open = expandedSet.has(key);
 
@@ -450,10 +458,19 @@ function renderGroupBox(group, members) {
   }
   html += '</div>';
 
+  // A box is free to hold anyone, which means it can quietly disagree with the
+  // reporting lines. Say so on its face rather than letting the chart mislead.
+  const elsewhere = members.filter(m => m.raw_supervisor_id !== anchorId).length;
+  if (elsewhere) {
+    html += '<div class="oc-group-note" title="These people are drawn here but '
+          + 'report elsewhere. Grouping changes nothing about reporting lines.">'
+          + elsewhere + ' of ' + members.length + ' report elsewhere</div>';
+  }
+
   html += '<div class="oc-card-footer oc-group-footer">';
   html += '<span class="oc-expand-toggle">';
   html += '<span class="oc-chevron' + (open ? ' expanded' : '') + '">&#9654;</span> ';
-  html += members.length + (members.length === 1 ? ' report' : ' reports');
+  html += members.length + (members.length === 1 ? ' person' : ' people');
   html += '</span>';
   html += '<span class="oc-group-hint">' + (open ? 'Collapse' : 'Expand') + '</span>';
   html += '</div>';
