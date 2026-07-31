@@ -23,13 +23,14 @@ TARGET_SCENARIO = "scenario"
 
 #: Ops the editor can stage, and which targets accept them.
 #:
-#: Correct mode accepts `add` but not `eliminate`, and the asymmetry is the
-#: point: adding is a data fix (the person works here, the export missed them),
-#: whereas eliminating is a plan — you are proposing that a real role stop
-#: existing, which belongs in a scenario. Scenario mode has no `exclude`, since
-#: excluding a duplicate row is a census correction, not a reorg.
+#: Both modes now take the same five structural ops. `exclude` is
+#: corrections-only: marking a row as a duplicate or a ghost record is a
+#: statement about the census file, which a scenario has no opinion about.
+#: `eliminate` behaves identically in both — the person comes off the chart and
+#: their reports move up a level — but it lands in a different place: a durable
+#: correction against the census, or a change_type on a ScenarioPosition.
 OPS_BY_TARGET = {
-    TARGET_CORRECTIONS: {"reparent", "set_root", "attribute", "exclude", "add"},
+    TARGET_CORRECTIONS: {"reparent", "set_root", "attribute", "exclude", "add", "eliminate"},
     TARGET_SCENARIO: {"reparent", "set_root", "attribute", "add", "eliminate"},
 }
 
@@ -142,11 +143,7 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
 
         # 1. Op allowed for the target.
         if name not in allowed_ops:
-            if name == "eliminate" and target == TARGET_CORRECTIONS:
-                err(i, name, eid,
-                    "Correct mode can't eliminate a role — proposing that a real position "
-                    "stop existing is a plan, not a correction. Use Scenario mode.")
-            elif name == "exclude" and target == TARGET_SCENARIO:
+            if name == "exclude" and target == TARGET_SCENARIO:
                 err(i, name, eid,
                     "Scenario mode can't exclude rows — eliminate the position instead.")
             else:
@@ -200,7 +197,11 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
             sim[eid] = None
 
         elif name == "exclude":
-            sim[eid] = None
+            # Identical to eliminate in the simulated map: the person leaves the
+            # chart and their reports are re-homed, so a later op can't target them.
+            eliminated.add(eid)
+            if not _simulate_removal(i, name, eid, after, sim, eliminated, branch, err):
+                continue
 
         elif name == "add":
             _check_fields(i, name, eid, after, whitelist, can_see_pay, err,
@@ -233,11 +234,8 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
 
         elif name == "eliminate":
             eliminated.add(eid)
-            pulled_up = sim.get(eid)
-            for child, sup in list(sim.items()):
-                if sup == eid:
-                    sim[child] = pulled_up
-            sim.pop(eid, None)
+            if not _simulate_removal(i, name, eid, after, sim, eliminated, branch, err):
+                continue
 
     # 6. No cycles, batch-wide — checked once, against the simulated result.
     for cycle in detect_cycles(sim):
@@ -256,6 +254,51 @@ def validate_changeset(ops: list[dict], *, target, snapshot=None, scenario=None,
 
     errors.sort(key=lambda e: e["index"])
     return errors
+
+
+def _simulate_removal(i, name, eid, after, sim, eliminated, branch, err) -> bool:
+    """Apply a removal to the simulated map, honouring the per-report allocation.
+
+    Returns False when the op is invalid. Destinations are validated here rather
+    than at write time so a bad allocation fails the whole batch cleanly instead
+    of quietly dumping people on the removed person's manager.
+    """
+    reassign = after.get("reassign") or {}
+    if not isinstance(reassign, dict):
+        err(i, name, eid, "Report allocations must be an object of {person: manager}.")
+        return False
+
+    default_parent = sim.get(eid)
+    children = [child for child, sup in sim.items() if sup == eid]
+
+    for child, dest in reassign.items():
+        dest = str(dest or "").strip()
+        if child not in children:
+            err(i, name, eid, f"{child} doesn't report to {eid}, so it can't be reallocated here.")
+            return False
+        if not dest:
+            continue
+        if dest == eid:
+            err(i, name, eid, f"{child} can't be moved to the position being removed.")
+            return False
+        if dest == child:
+            err(i, name, eid, f"{child} can't be made their own manager.")
+            return False
+        if dest in eliminated:
+            err(i, name, eid, f"{dest} is also being removed in this batch.")
+            return False
+        if dest not in sim:
+            err(i, name, eid, f"Manager {dest} is not in this org.")
+            return False
+        if branch is not None and dest not in branch:
+            err(i, name, eid, f"Manager {dest} is outside the part of the org you can edit.")
+            return False
+
+    for child in children:
+        dest = str(reassign.get(child) or "").strip()
+        sim[child] = dest or default_parent
+    sim.pop(eid, None)
+    return True
 
 
 def _check_fields(i, name, eid, after, whitelist, can_see_pay, err, extra_keys=frozenset()):
@@ -386,6 +429,7 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
         "attribute": StructureCorrection.Kind.ATTRIBUTE,
         "exclude": StructureCorrection.Kind.EXCLUDE,
         "add": StructureCorrection.Kind.ADD_PERSON,
+        "eliminate": StructureCorrection.Kind.ELIMINATE,
     }
     applied = 0
     id_map: dict[str, str] = {}
@@ -435,6 +479,13 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
                      if k in corrections_svc.CORRECTABLE_FIELDS}
         elif name == "reparent":
             after = {"raw_supervisor_id": resolve(after.get("raw_supervisor_id"))}
+        elif name in ("exclude", "eliminate"):
+            # Where each direct report should land. Kept on the correction so a
+            # replay onto next month's census honours the same allocation.
+            after = {"reassign": {
+                str(child): resolve(dest)
+                for child, dest in (after.get("reassign") or {}).items() if dest
+            }}
         else:
             after = {}
 
@@ -536,7 +587,10 @@ def _commit_scenario(ops, *, scenario) -> tuple[int, dict]:
             if note:
                 pos.note = note
                 pos.save(update_fields=["note", "updated_at"])
-            scenarios_svc.eliminate_position(pos)
+            scenarios_svc.eliminate_position(pos, reassign={
+                str(child): resolve(dest)
+                for child, dest in (after.get("reassign") or {}).items() if dest
+            })
             positions.pop(eid, None)
         applied += 1
 

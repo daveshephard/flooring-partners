@@ -198,9 +198,23 @@ export function installDragLayer(api) {
     // elementFromPoint takes viewport coordinates and accounts for CSS
     // transforms, so this is accurate at any zoom or pan with no manual math.
     const el = document.elementFromPoint(pointer.x, pointer.y);
-    const card = el && el.closest ? el.closest(".oc-card") : null;
+    const rawCard = el && el.closest ? el.closest(".oc-card") : null;
     const inViewport = el && el.closest && el.closest("#oc-viewport");
 
+    // A grouping box is a valid target — dropping onto it files the person into
+    // that team — but it is not a person, so it never takes the card path.
+    const groupBox = rawCard && rawCard.classList.contains("oc-group-card") ? rawCard : null;
+    if (groupBox) {
+      if (currentTarget !== groupBox) {
+        clearTarget();
+        currentTarget = groupBox;
+        groupBox.classList.add("oc-drop-valid");
+      }
+      setRootHot(false);
+      return;
+    }
+
+    const card = rawCard;
     const targetId = card ? card.dataset.eid : null;
     if (targetId === (currentTarget && currentTarget.dataset.eid)) {
       if (!card) clearTarget();
@@ -268,7 +282,9 @@ export function installDragLayer(api) {
     if (!api.isEditing() || e.button !== 0) return;
     if (e.target.closest(".oc-focus-btn") || e.target.closest(".oc-expand-toggle")) return;
     const card = e.target.closest(".oc-card");
-    if (!card) return;
+    // Group boxes are drop targets, never drag sources — they have no reporting
+    // line of their own to move.
+    if (!card || card.classList.contains("oc-group-card") || !card.dataset.eid) return;
     begin(e, card.dataset.eid, card, false);
   });
 
@@ -288,10 +304,19 @@ export function installDragLayer(api) {
     if (!drag) { pending = null; return; }   // never crossed the threshold → a click
 
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const card = el && el.closest ? el.closest(".oc-card") : null;
+    const rawCard = el && el.closest ? el.closest(".oc-card") : null;
     const inViewport = el && el.closest && el.closest("#oc-viewport");
     const draggedId = drag.id;
     const fromTray = drag.fromTray;
+
+    if (rawCard && rawCard.classList.contains("oc-group-card")) {
+      const groupId = rawCard.dataset.group;
+      endDrag(true);
+      api.onDropIntoGroup(draggedId, groupId);
+      return;
+    }
+
+    const card = rawCard;
     const targetId = card ? card.dataset.eid : null;
 
     const valid = targetId && (fromTray

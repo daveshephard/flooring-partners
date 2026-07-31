@@ -497,6 +497,70 @@ button.oc-tile:hover { border-color: var(--accent); }
   padding-top: 0.7rem;
 }
 
+/* ── Group editor ──────────────────────────────────────────────────── */
+.oc-accent-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.oc-accent {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+.oc-accent::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.oc-accent.accent-sand::before  { background: #8A7659; }
+.oc-accent.accent-sage::before  { background: #5F7A5C; }
+.oc-accent.accent-slate::before { background: #4E6472; }
+.oc-accent.accent-plum::before  { background: #7A5A6E; }
+.oc-accent:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.oc-accent input { accent-color: var(--accent); }
+
+.oc-group-picker {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+}
+
+.oc-group-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid rgba(60,69,75,0.4);
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.oc-group-pick:last-child { border-bottom: none; }
+.oc-group-pick:hover { background: rgba(164,146,117,0.07); }
+.oc-group-pick.taken { opacity: 0.5; cursor: not-allowed; }
+.oc-group-pick input { accent-color: var(--accent); margin-top: 0.15rem; }
+.oc-group-pick .pick-name { display: block; }
+.oc-group-pick .pick-title { display: block; color: var(--text-muted); font-size: 0.7rem; }
+
+/* ── Report reallocation (removing a manager) ──────────────────────── */
+.oc-realloc-bulk {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.oc-realloc-bulk .oc-field { margin-bottom: 0; flex: 1; }
+
 /* ── Toasts ────────────────────────────────────────────────────────── */
 .oc-toasts {
   position: fixed;

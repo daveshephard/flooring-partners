@@ -414,6 +414,8 @@ chart.hooks.onCardClick = (eid, node, e) => {
 
 async function loadForMode() {
   await chart.loadTree();
+  // Groups are a reading aid, so they load in every mode including View.
+  await refreshGroups();
   if (mode === "correct") {
     await Promise.all([refreshUnattached(), refreshCorrectionStats()]);
   } else if (mode === "scenario") {
@@ -749,6 +751,17 @@ function openPanel(eid) {
   html += `<button class="btn btn-secondary btn-xs" type="button" data-act="add-report">`
         + (mode === "correct" ? "+ Add a missing report" : "+ Add report") + `</button>`;
 
+  if ((node.children || []).length > 1) {
+    html += ` <button class="btn btn-secondary btn-xs" type="button" data-act="group">`
+          + `Group reports…</button>`;
+    const mine = chart.getGroups().filter(g => g.parent_employee_id === eid);
+    if (mine.length) {
+      html += `<div class="oc-panel-hint" style="margin-top:0.35rem;">Teams here: `
+            + mine.map(g => `<a data-edit-group="${esc(g.id)}">${esc(g.name)}</a>`).join(", ")
+            + `</div>`;
+    }
+  }
+
   html += `<div class="oc-panel-section">Note</div>`
     + `<div class="oc-field"><textarea id="fld-note" rows="2" `
     + `placeholder="Why this change?">${esc(staged[0] ? staged[0].note || "" : "")}</textarea></div>`;
@@ -762,17 +775,21 @@ function openPanel(eid) {
           + `</details>`;
   }
 
+  const kids = (node.children || []).length;
   html += `<div class="oc-danger-zone">`;
+  html += `<p>`
+        + (kids
+            ? `This person has ${kids} direct report(s) — you'll choose where each one goes. `
+            : "")
+        + `Staged, so you can remove it from the review list before saving.</p>`;
+  html += `<button class="btn btn-danger btn-xs" type="button" data-act="eliminate">`
+        + `Eliminate position</button>`;
   if (mode === "correct") {
-    html += `<p>Removes this row from the chart without deleting it. Use for duplicate `
-          + `rows or ghost records in the payroll export. Reversible from the Excluded list.</p>`
-          + `<button class="btn btn-danger btn-xs" type="button" data-act="exclude">Exclude from chart</button>`;
-  } else {
-    const kids = (node.children || []).length;
-    html += `<p>Eliminate this position?${kids ? ` Its ${kids} direct report(s) will move up `
-          + `to report to ${esc(parent ? parent.full_name : "nobody")}.` : ""} `
-          + `This is staged — you can remove it from the review list before saving.</p>`
-          + `<button class="btn btn-danger btn-xs" type="button" data-act="eliminate">Eliminate position</button>`;
+    html += ` <button class="btn btn-danger btn-xs" type="button" data-act="exclude">`
+          + `Exclude from chart</button>`
+          + `<p style="margin-top:0.4rem;">Eliminate when the role is gone. Exclude when the `
+          + `row shouldn't be here at all — a duplicate or a ghost record in the export. `
+          + `Both are reversible from the Corrections page.</p>`;
   }
   html += `</div></div>`;
 
@@ -820,19 +837,18 @@ function wirePanel(eid, node, fields) {
   $panel.addEventListener("click", e => {
     const goto = e.target.closest("[data-goto]");
     if (goto) { chart.navigateToEmployee(goto.dataset.goto); return; }
+    const editGroup = e.target.closest("[data-edit-group]");
+    if (editGroup) { closePanel(); return openGroupForm({ groupId: editGroup.dataset.editGroup }); }
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
     if (act === "cancel") return closePanel();
     if (act === "apply") return applyPanel(eid, node, fields);
     if (act === "set-root") return stageSetRoot(eid, node);
-    if (act === "exclude") return typedConfirm(
-      `Exclude ${node.full_name} from the chart?`, "EXCLUDE",
-      () => { stage({ op: "exclude", employee_id: eid, after: {}, note: noteValue() }); closePanel(); });
-    if (act === "eliminate") return typedConfirm(
-      `Eliminate ${node.full_name}'s position?`, "ELIMINATE",
-      () => { stage({ op: "eliminate", employee_id: eid, after: {}, note: noteValue() }); closePanel(); });
+    if (act === "exclude") return openRemovalForm(eid, node, "exclude");
+    if (act === "eliminate") return openRemovalForm(eid, node, "eliminate");
     if (act === "add-report") { closePanel(); return openAddForm(eid); }
+    if (act === "group") { closePanel(); return openGroupForm({ parentId: eid }); }
   });
 
   $panel.addEventListener("keydown", e => {
@@ -901,6 +917,280 @@ function stageSetRoot(eid, node) {
       note: noteValue(),
     });
     closePanel();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Decorative grouping boxes
+   ══════════════════════════════════════════════════════════════════
+   A manager with thirty direct reports is unreadable. Grouping folds some of
+   them into a named box showing headcount and cost, which expands to the
+   ordinary cards underneath.
+
+   Groups change no reporting line and no stored field, so they save immediately
+   rather than joining the pending changeset — there'd be nothing for the review
+   modal to review. They're visible in every mode, including View, because
+   decluttering is a reading problem before it's an editing one. */
+
+const ACCENTS = [
+  ["sand", "Sand"], ["sage", "Sage"], ["slate", "Slate"], ["plum", "Plum"],
+];
+
+async function refreshGroups() {
+  const r = await api("/groups/");
+  if (r.ok && r.data) chart.setGroups(r.data.groups);
+}
+
+function groupById(id) {
+  return chart.getGroups().find(g => String(g.id) === String(id)) || null;
+}
+
+/** Open the editor for an existing group, or create one under `parentId`. */
+function openGroupForm({ groupId = null, parentId = null, preselect = [] } = {}) {
+  const group = groupId ? groupById(groupId) : null;
+  const parent = nodeFor(group ? group.parent_employee_id : parentId);
+  if (!parent) {
+    toast("Pick a manager first — a group collects one person's direct reports.", "err");
+    return;
+  }
+  const reports = parent.children || [];
+  if (!reports.length) {
+    toast(`${parent.full_name} has no direct reports to group.`, "err");
+    return;
+  }
+
+  // Someone already in another group under this manager can't be in two boxes.
+  const takenElsewhere = new Map();
+  for (const g of chart.getGroups()) {
+    if (g.parent_employee_id !== parent.employee_id) continue;
+    if (group && String(g.id) === String(group.id)) continue;
+    for (const m of g.member_ids || []) takenElsewhere.set(m, g.name);
+  }
+
+  const chosen = new Set(group ? group.member_ids : preselect);
+
+  let body = `<div class="oc-field"><label for="grp-name">Group name</label>`
+    + `<input id="grp-name" value="${esc(group ? group.name : "")}" `
+    + `placeholder="e.g. Commercial Sales" autocomplete="off"></div>`;
+
+  body += `<div class="oc-field"><label>Colour</label><div class="oc-accent-row">`
+    + ACCENTS.map(([key, label]) =>
+        `<label class="oc-accent accent-${key}">`
+        + `<input type="radio" name="grp-accent" value="${key}"`
+        + ((group ? group.accent : "sand") === key ? " checked" : "") + `>`
+        + `<span>${esc(label)}</span></label>`).join("")
+    + `</div></div>`;
+
+  body += `<div class="oc-panel-section">`
+    + `Who's in it — ${esc(parent.full_name)}'s reports</div>`;
+  body += `<div class="oc-group-picker">`;
+  for (const child of reports) {
+    const taken = takenElsewhere.get(child.employee_id);
+    const below = Math.max(0, (child.metrics.headcount || 1) - 1);
+    body += `<label class="oc-group-pick${taken ? " taken" : ""}">`
+      + `<input type="checkbox" data-member="${esc(child.employee_id)}"`
+      + (chosen.has(child.employee_id) ? " checked" : "")
+      + (taken ? " disabled" : "") + `>`
+      + `<span><span class="pick-name">${esc(child.full_name)}</span>`
+      + `<span class="pick-title">${esc(child.job_title || "—")}`
+      + (below ? ` · ${below} below` : "")
+      + (taken ? ` · already in “${esc(taken)}”` : "") + `</span></span></label>`;
+  }
+  body += `</div>`;
+  body += `<label class="oc-panel-hint" style="display:flex;gap:0.35rem;align-items:center;margin-top:0.5rem;">`
+    + `<input type="checkbox" id="grp-collapsed"`
+    + ((group ? group.collapsed_by_default : true) ? " checked" : "")
+    + `> Start collapsed</label>`;
+  body += `<p class="oc-panel-hint" style="margin-top:0.5rem;">`
+    + `Grouping is decorative — it changes no reporting line, and saves straight away.</p>`;
+
+  const buttons = [{ label: "Cancel", cls: "btn-secondary", value: null }];
+  if (group) buttons.push({ label: "Ungroup", cls: "btn-danger", value: "delete" });
+  buttons.push({ label: group ? "Save group" : "Create group", cls: "btn-primary", value: "save" });
+
+  openModal({
+    title: group ? `Edit “${group.name}”` : "Group reports",
+    body,
+    buttons,
+    onMount(root) {
+      const first = root.querySelector("#grp-name");
+      if (first) first.focus();
+    },
+    async onClose(value, root) {
+      if (value === "delete") return deleteGroup(group.id, group.name);
+      if (value !== "save") return;
+
+      const name = (root.querySelector("#grp-name").value || "").trim();
+      const members = [...root.querySelectorAll("[data-member]:checked")]
+        .map(cb => cb.dataset.member);
+      const accent = (root.querySelector("[name=grp-accent]:checked") || {}).value || "sand";
+
+      if (!name) return toast("Give the group a name.", "err");
+      if (!members.length) return toast("Pick at least one person for the group.", "err");
+
+      const r = await api("/groups/save/", {
+        body: JSON.stringify({
+          id: group ? group.id : null,
+          parent_employee_id: parent.employee_id,
+          name, member_ids: members, accent,
+          collapsed_by_default: root.querySelector("#grp-collapsed").checked,
+        }),
+      });
+      if (!r.ok) return toast((r.data && r.data.error) || "Couldn't save the group.", "err");
+      chart.setGroups(r.data.groups);
+      chart.renderTree();
+      toast(group ? "Group updated." : `Grouped ${members.length} into “${name}”.`, "ok");
+    },
+  });
+}
+
+function deleteGroup(id, name) {
+  typedConfirm(`Ungroup “${name}”?`, "UNGROUP", async () => {
+    const r = await api(`/groups/${id}/delete/`, { body: "{}" });
+    if (!r.ok) return toast("Couldn't ungroup.", "err");
+    chart.setGroups(r.data.groups);
+    chart.renderTree();
+    toast("Ungrouped — the members are back as ordinary cards.", "ok");
+  }, "The box disappears and its members go back to being ordinary cards. "
+   + "Nobody's reporting line changes.");
+}
+
+chart.hooks.onGroupEdit = gid => openGroupForm({ groupId: gid });
+
+/** Dropping a card onto a group box files them into it. */
+async function addToGroup(employeeId, groupId) {
+  const group = groupById(groupId);
+  if (!group) return;
+  const node = nodeFor(employeeId);
+  const members = new Set(group.member_ids || []);
+  if (members.has(employeeId)) return;
+
+  // The box only draws children of its own manager, so a card dragged in from
+  // elsewhere has to be reparented too — otherwise it would vanish.
+  const parent = findParentIn(chart.fullTree, employeeId);
+  if (!parent || parent.employee_id !== group.parent_employee_id) {
+    if (!isEditing()) {
+      toast("Switch to Correct or Scenario mode to move someone into that team.", "err");
+      return;
+    }
+    stage(reparentOp(employeeId, group.parent_employee_id, node, ""));
+  }
+
+  members.add(employeeId);
+  const r = await api("/groups/save/", {
+    body: JSON.stringify({
+      id: group.id, parent_employee_id: group.parent_employee_id,
+      name: group.name, member_ids: [...members], accent: group.accent,
+      collapsed_by_default: group.collapsed_by_default,
+    }),
+  });
+  if (!r.ok) return toast((r.data && r.data.error) || "Couldn't add to that group.", "err");
+  chart.setGroups(r.data.groups);
+  rerender();
+  toast(`Added to “${group.name}”.`, "ok");
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Removing someone — and deciding where their team goes
+   ══════════════════════════════════════════════════════════════════
+   Removing a manager is really two decisions, and the old tool only ever asked
+   about the first. Everyone underneath was silently pulled up to the departing
+   manager's own boss, which is rarely what a real reorg does — a disbanded team
+   usually gets split across several people. So the reports are allocated here,
+   in the same gesture, with a lookup per person.
+
+   For someone with no reports there is nothing to allocate, so that case keeps
+   the typed confirm. For a manager, choosing destinations *is* the deliberate
+   act; making you also type a word on top would be ceremony, not safety. */
+
+function openRemovalForm(eid, node, kind) {
+  const reports = (node.children || []).slice();
+  const parent = findParentIn(chart.fullTree, eid);
+  const eliminating = kind === "eliminate";
+  const verb = eliminating ? "Eliminate" : "Exclude";
+
+  if (!reports.length) {
+    const body = eliminating
+      ? `Eliminate ${node.full_name}'s position? They have no direct reports.`
+      : `Remove ${node.full_name} from the chart? The row is kept and stays `
+        + `reversible from the Excluded list — use this for duplicate rows or `
+        + `ghost records in the payroll export.`;
+    return typedConfirm(`${verb} ${node.full_name}?`, verb.toUpperCase(), () => {
+      stage({ op: kind, employee_id: eid, after: {}, note: noteValue() });
+      closePanel();
+    }, body);
+  }
+
+  const fallback = parent
+    ? `${parent.full_name} (${parent.employee_id})`
+    : "the top of the org";
+  const dest = new Map();   // child employee_id -> chosen manager id (or "")
+
+  let body = `<p style="margin-bottom:0.7rem;">`
+    + `${esc(node.full_name)} has <strong>${reports.length}</strong> direct report`
+    + `${reports.length === 1 ? "" : "s"}. Choose where each one goes. `
+    + `Anything left blank moves up to ${esc(fallback)}.</p>`;
+
+  body += `<div class="oc-realloc-bulk">`
+    + `<span>Move everyone to</span>`
+    + typeaheadMarkup("rm-ta-all", "Search for a manager…", "")
+    + `</div>`;
+
+  body += `<table class="oc-diff-table"><tbody>`;
+  reports.forEach((child, idx) => {
+    const below = Math.max(0, (child.metrics.headcount || 1) - 1);
+    body += `<tr><td style="width:45%;">`
+      + `<div>${esc(child.full_name)}</div>`
+      + `<div class="ta-title">${esc(child.job_title || "—")}`
+      + (below ? ` · brings ${below} with them` : "") + `</div></td>`
+      + `<td>${typeaheadMarkup("rm-ta-" + idx, "→ " + fallback, "")}</td></tr>`;
+  });
+  body += `</tbody></table>`;
+
+  openModal({
+    title: `${verb} ${node.full_name}'s position?`,
+    body,
+    buttons: [
+      { label: "Cancel", cls: "btn-secondary", value: null },
+      { label: verb, cls: "btn-danger", value: "go" },
+    ],
+    onMount(root) {
+      // A destination may not be the person being removed, nor the report
+      // themselves, nor anyone beneath that report — all three would strand them.
+      const subtree = invalidTargetsFor(chart.fullTree, eid);
+      attachTypeahead(root, "rm-ta-all", {
+        exclude: subtree,
+        onPick(target) {
+          reports.forEach((child, idx) => {
+            if (child.employee_id === target) return;
+            dest.set(child.employee_id, target);
+            const input = root.querySelector("#rm-ta-" + idx);
+            if (input) input.value = nameOf(target);
+          });
+        },
+      });
+      reports.forEach((child, idx) => {
+        const bad = invalidTargetsFor(chart.fullTree, child.employee_id);
+        bad.add(eid);
+        attachTypeahead(root, "rm-ta-" + idx, {
+          exclude: bad,
+          onPick(target) { dest.set(child.employee_id, target); },
+        });
+        const input = root.querySelector("#rm-ta-" + idx);
+        input.addEventListener("input", () => {
+          if (!input.value.trim()) dest.delete(child.employee_id);
+        });
+      });
+    },
+    onClose(value) {
+      if (value !== "go") return;
+      const reassign = {};
+      for (const [child, target] of dest) if (target) reassign[child] = target;
+      stage({ op: kind, employee_id: eid, after: { reassign }, note: noteValue() });
+      closePanel();
+      for (const target of Object.values(reassign)) chart.expandNode(target);
+      rerender();
+    },
   });
 }
 
@@ -1253,8 +1543,18 @@ function describe(op) {
         const was = (op._before || {})[k];
         return `${k}: "${was ?? ""}" → "${v ?? ""}"`;
       }).join("; ");
-    case "exclude":   return "removed from the chart (row kept, reversible)";
-    case "eliminate": return "position eliminated; reports move up a level";
+    case "exclude":
+    case "eliminate": {
+      const head = op.op === "exclude"
+        ? "removed from the chart (row kept, reversible)"
+        : "position eliminated";
+      const alloc = Object.entries(op.after.reassign || {});
+      if (!alloc.length) {
+        const kids = (node.children || []).length;
+        return kids ? `${head}; ${kids} report(s) move up a level` : head;
+      }
+      return head + "; " + alloc.map(([c, m]) => `${nameOf(c)} → ${nameOf(m)}`).join(", ");
+    }
     case "add": {
       const who = `${op.after.first_name || ""} ${op.after.last_name || ""}`.trim()
                 || op.after.job_title || "new position";
@@ -1418,11 +1718,12 @@ function confirmModal({ title, body, confirmLabel, extraLabel }) {
 }
 
 /** A typed confirm, not a bare confirm() — these actions are consequential. */
-function typedConfirm(question, word, onYes) {
+function typedConfirm(question, word, onYes, explanation) {
   openModal({
     narrow: true,
     title: question,
-    body: `<p>Type <strong>${word}</strong> to confirm.</p>`
+    body: (explanation ? `<p style="margin-bottom:0.6rem;">${esc(explanation)}</p>` : "")
+        + `<p>Type <strong>${word}</strong> to confirm.</p>`
         + `<div class="oc-field"><input id="oc-confirm-word" autocomplete="off"></div>`,
     buttons: [
       { label: "Cancel", cls: "btn-secondary", value: null },
@@ -1507,6 +1808,9 @@ function installDrag() {
       const node = nodeFor(draggedId);
       if (!node) return;
       stageSetRootFromDrag(draggedId, node);
+    },
+    onDropIntoGroup(draggedId, groupId) {
+      addToGroup(draggedId, groupId);
     },
   });
 }

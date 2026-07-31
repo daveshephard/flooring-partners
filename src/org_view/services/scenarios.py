@@ -196,16 +196,32 @@ def add_position(scenario: Scenario, *, supervisor_id: str | None = None,
 
 
 @transaction.atomic
-def eliminate_position(position: ScenarioPosition):
-    """Eliminate a role; reparent its direct reports to its manager."""
+def eliminate_position(position: ScenarioPosition, reassign: dict | None = None):
+    """Eliminate a role and re-home its direct reports.
+
+    ``reassign`` maps ``employee_id -> new supervisor_id`` for individual
+    reports; anyone not named falls back to the eliminated position's own
+    manager, which is the long-standing default. Splitting a disbanded team
+    across several managers is the common case, and the old blanket pull-up
+    forced you to eliminate first and then move everyone by hand.
+    """
     ct = ScenarioPosition.ChangeType
     scenario = position.scenario
-    new_parent = position.raw_supervisor_id  # may be None (its reports become roots)
+    default_parent = position.raw_supervisor_id  # may be None (reports become roots)
+    reassign = reassign or {}
+    live = set(
+        scenario.positions.exclude(change_type=ct.REMOVED)
+        .values_list("employee_id", flat=True)
+    )
 
     reports = scenario.positions.exclude(change_type=ct.REMOVED).filter(
         raw_supervisor_id=position.employee_id,
     )
     for child in reports:
+        wanted = (reassign.get(child.employee_id) or "").strip() or None
+        if wanted and (wanted not in live or wanted == child.employee_id):
+            wanted = None
+        new_parent = wanted or default_parent
         # Remember where the child hung before the elimination pulled it up, so
         # un-eliminating is reconstructible. Previously this was simply lost.
         if not child.prior_supervisor_id:

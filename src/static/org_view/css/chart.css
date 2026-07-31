@@ -585,6 +585,123 @@
   color: #fff;
 }
 
+/* ── Grouping boxes ────────────────────────────────────────────────
+   Person cards are white with a navy header. Group boxes are a warm, filled
+   card with a heavy tinted border and no white body at all — the point is that
+   you can tell at a glance, at any zoom, that a box is a team rather than a
+   person. Four accents so several groups on one row stay distinguishable. */
+
+.oc-group-card {
+  border-width: 2px;
+  border-style: solid;
+  background: #F3EDE2;
+  border-color: #C9B79A;
+}
+
+.oc-group-card:hover {
+  border-color: #8A7659;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+}
+
+.oc-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.7rem;
+  background: #8A7659;
+}
+
+.oc-group-name {
+  flex: 1;
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #fff;
+  line-height: 1.2;
+}
+
+.oc-group-edit {
+  background: rgba(255,255,255,0.18);
+  border: none;
+  color: #fff;
+  border-radius: 0.15rem;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 0.7rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.oc-group-edit:hover { background: rgba(255,255,255,0.35); }
+
+.oc-group-stats {
+  display: flex;
+  gap: 0.9rem;
+  padding: 0.65rem 0.7rem 0.55rem;
+}
+
+.oc-group-stat { display: flex; flex-direction: column; }
+
+/* Deliberately larger than a person card's 0.82rem metric value. */
+.oc-group-figure {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #4A3F2E;
+}
+
+.oc-group-unit {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8A7659;
+}
+
+.oc-group-footer {
+  background: rgba(138,118,89,0.12);
+  border-top: 1px solid #D8CBB4;
+  color: #6B5C46;
+}
+
+.oc-group-footer .oc-expand-toggle { color: #6B5C46; }
+.oc-group-hint {
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8A7659;
+}
+
+/* Accents */
+.oc-group-card.accent-sage  { background: #EAF0E7; border-color: #AFC4A8; }
+.oc-group-card.accent-sage  .oc-group-header { background: #5F7A5C; }
+.oc-group-card.accent-sage  .oc-group-figure { color: #33452F; }
+.oc-group-card.accent-sage  .oc-group-unit,
+.oc-group-card.accent-sage  .oc-group-hint   { color: #5F7A5C; }
+.oc-group-card.accent-sage  .oc-group-footer { background: rgba(95,122,92,0.12); border-top-color: #C4D4BE; }
+.oc-group-card.accent-sage:hover { border-color: #5F7A5C; }
+
+.oc-group-card.accent-slate { background: #E8EEF2; border-color: #A6BAC7; }
+.oc-group-card.accent-slate .oc-group-header { background: #4E6472; }
+.oc-group-card.accent-slate .oc-group-figure { color: #2B3A44; }
+.oc-group-card.accent-slate .oc-group-unit,
+.oc-group-card.accent-slate .oc-group-hint   { color: #4E6472; }
+.oc-group-card.accent-slate .oc-group-footer { background: rgba(78,100,114,0.12); border-top-color: #BFCEd8; }
+.oc-group-card.accent-slate:hover { border-color: #4E6472; }
+
+.oc-group-card.accent-plum  { background: #F2E9EE; border-color: #C7A9BA; }
+.oc-group-card.accent-plum  .oc-group-header { background: #7A5A6E; }
+.oc-group-card.accent-plum  .oc-group-figure { color: #452F3C; }
+.oc-group-card.accent-plum  .oc-group-unit,
+.oc-group-card.accent-plum  .oc-group-hint   { color: #7A5A6E; }
+.oc-group-card.accent-plum  .oc-group-footer { background: rgba(122,90,110,0.12); border-top-color: #D8C2CD; }
+.oc-group-card.accent-plum:hover { border-color: #7A5A6E; }
+
 /* Collapse badge */
 .oc-collapse-badge {
   display: flex;

@@ -50,6 +50,8 @@ export const hooks = {
   onTreeLoaded: null,
   /** () => url override for the tree fetch. */
   treeUrl: null,
+  /** (groupId) => void, when the gear on a grouping box is clicked. */
+  onGroupEdit: null,
 };
 
 /* ── DOM refs ────────────────────────────────────────────────────── */
@@ -356,11 +358,111 @@ function renderNodeGroup(node) {
 
   if (hasKids) {
     html += '<div class="oc-children' + (isExpanded ? '' : ' collapsed') + '">';
-    for (const ch of node.children) {
-      html += renderNodeGroup(ch);
-    }
+    html += renderChildren(node);
     html += '</div>';
   }
+
+  html += '</div>';
+  return html;
+}
+
+/* ── Decorative grouping boxes ───────────────────────────────────── */
+
+let chartGroups = [];
+
+/** Replace the set of grouping boxes. Purely presentational — no data changes. */
+export function setGroups(groups) {
+  chartGroups = groups || [];
+  for (const g of chartGroups) {
+    // Decluttering only helps if the box starts closed.
+    if (!g.collapsed_by_default) expandedSet.add(groupKey(g.id));
+  }
+}
+
+export function getGroups() { return chartGroups; }
+export function groupKey(id) { return "grp:" + id; }
+
+function groupsFor(parentId) {
+  return chartGroups.filter(g => g.parent_employee_id === parentId);
+}
+
+export function toggleGroup(id) {
+  const key = groupKey(id);
+  if (expandedSet.has(key)) expandedSet.delete(key);
+  else expandedSet.add(key);
+  renderTree();
+}
+
+/** A manager's children, with any grouped siblings folded into boxes. */
+function renderChildren(node) {
+  const groups = groupsFor(node.employee_id);
+  if (!groups.length) return node.children.map(renderNodeGroup).join("");
+
+  const claimed = new Set();
+  let html = "";
+  for (const g of groups) {
+    const ids = new Set(g.member_ids || []);
+    // Members who left this manager — or the census — simply aren't drawn.
+    const members = node.children.filter(c => ids.has(c.employee_id));
+    if (!members.length) continue;
+    members.forEach(m => claimed.add(m.employee_id));
+    html += renderGroupBox(g, members);
+  }
+  for (const ch of node.children) {
+    if (!claimed.has(ch.employee_id)) html += renderNodeGroup(ch);
+  }
+  return html;
+}
+
+function renderGroupBox(group, members) {
+  const key = groupKey(group.id);
+  const open = expandedSet.has(key);
+
+  let headcount = 0, cost = 0, hasCost = false;
+  for (const m of members) {
+    const mm = m.metrics || {};
+    headcount += mm.headcount || 1;
+    if (mm.total_labor_cost != null) { cost += mm.total_labor_cost; hasCost = true; }
+  }
+  const showCost = hasCost && window.CAN_SEE_PAY !== false;
+
+  // Rendered as a .oc-node-group wrapping a .oc-card so the existing connector
+  // maths, hit-testing and collapse machinery all work on it unchanged.
+  let html = '<div class="oc-node-group" data-nid="' + esc(key) + '">';
+  html += '<div class="oc-card oc-group-card accent-' + esc(group.accent || "sand")
+        + '" data-group="' + esc(group.id) + '">';
+
+  html += '<div class="oc-group-header">';
+  html += '<span class="oc-group-name">' + esc(group.name) + '</span>';
+  if (CFG.canEdit) {
+    html += '<button class="oc-group-edit" data-group-edit="' + esc(group.id)
+          + '" title="Edit this group" aria-label="Edit group">&#9881;</button>';
+  }
+  html += '</div>';
+
+  html += '<div class="oc-group-stats">';
+  html += '<div class="oc-group-stat"><span class="oc-group-figure">' + fmtCount(headcount)
+        + '</span><span class="oc-group-unit">' + (headcount === 1 ? 'person' : 'people')
+        + '</span></div>';
+  if (showCost) {
+    html += '<div class="oc-group-stat"><span class="oc-group-figure">' + fmtCurrency(cost)
+          + '</span><span class="oc-group-unit">loaded cost</span></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="oc-card-footer oc-group-footer">';
+  html += '<span class="oc-expand-toggle">';
+  html += '<span class="oc-chevron' + (open ? ' expanded' : '') + '">&#9654;</span> ';
+  html += members.length + (members.length === 1 ? ' report' : ' reports');
+  html += '</span>';
+  html += '<span class="oc-group-hint">' + (open ? 'Collapse' : 'Expand') + '</span>';
+  html += '</div>';
+
+  html += '</div>';
+
+  html += '<div class="oc-children' + (open ? '' : ' collapsed') + '">';
+  html += members.map(renderNodeGroup).join("");
+  html += '</div>';
 
   html += '</div>';
   return html;
@@ -522,6 +624,20 @@ function initViewportControls() {
     if (focusBtn) {
       e.stopPropagation();
       focusOnNode(focusBtn.dataset.focus);
+      return;
+    }
+
+    // Group boxes come first: they are .oc-card too (so connectors and
+    // hit-testing work on them unchanged) but they aren't people.
+    const groupCard = e.target.closest(".oc-group-card");
+    if (groupCard) {
+      const gid = groupCard.dataset.group;
+      if (e.target.closest("[data-group-edit]")) {
+        e.stopPropagation();
+        if (hooks.onGroupEdit) hooks.onGroupEdit(gid);
+        return;
+      }
+      toggleGroup(gid);
       return;
     }
 

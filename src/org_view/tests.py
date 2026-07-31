@@ -11,7 +11,7 @@ from django.urls import reverse
 from accounts.models import AppDefinition, CompanyProfile, UserProfile
 
 from .models import (
-    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
+    AppPermission, CensusSnapshot, ChartGroup, Company, CorrectionReplayLog, Employee, Scenario,
     ScenarioPosition, StructureCorrection,
 )
 from .services import changeset as CS
@@ -676,17 +676,112 @@ class ChangesetTests(OrgFixtureMixin, TestCase):
         self.assertEqual(resp.status_code, 422)
         self.assertIn("bogus_field", resp.json()["errors"][0]["error"])
 
-    def test_correct_mode_rejects_eliminate_but_allows_add(self):
-        """The asymmetry is deliberate.
+    def test_correct_mode_eliminate_pulls_reports_up(self):
+        """Eliminate behaves the same as it does in a scenario."""
+        resp = self.commit([{"op": "eliminate", "employee_id": "E2", "after": {},
+                             "note": "role closed in April"}])
+        self.assertEqual(resp.status_code, 200, resp.content)
 
-        Adding is a data fix — the person works here and the export missed them.
-        Eliminating is a plan: proposing a real role stop existing belongs in a
-        scenario, not in a correction to the census.
-        """
-        resp = self.commit([{"op": "eliminate", "employee_id": "E3", "after": {}}])
+        gone = Employee.objects.get(snapshot=self.snap, employee_id="E2")
+        self.assertEqual(gone.employee_status, Employee.EXCLUDED_STATUS)
+        self.assertNotIn("E2", _flatten_ids(strip_aggregation(build_tree(self.snap.id))))
+        # …and their team is not stranded.
+        for eid in ("E3", "E4"):
+            child = Employee.objects.get(snapshot=self.snap, employee_id=eid)
+            self.assertEqual(child.raw_supervisor_id, "E1")
+            self.assertEqual(child.supervisor.employee_id, "E1")
+        self.assertEqual(self.client.get(self.url("api_unattached")).json()["counts"]["orphans"], 1,
+                         "only the pre-existing X1 orphan — no new ones")
+
+    def test_removal_allocates_reports_individually(self):
+        """A disbanded team usually splits across several managers."""
+        resp = self.commit([{
+            "op": "eliminate", "employee_id": "E2",
+            "after": {"reassign": {"E3": "E5"}},   # E4 left blank -> falls back
+            "note": "team split between ops and finance",
+        }])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E3").raw_supervisor_id, "E5")
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E4").raw_supervisor_id, "E1",
+            "an unallocated report falls back to the removed manager's own manager")
+
+    def test_removal_allocation_replays_to_the_next_census(self):
+        self.commit([{"op": "eliminate", "employee_id": "E2",
+                      "after": {"reassign": {"E3": "E5"}}}])
+        snap_b = self.make_snapshot(self.company, label="Q2")
+        C.replay_corrections(snap_b)
+        self.assertEqual(
+            Employee.objects.get(snapshot=snap_b, employee_id="E3").raw_supervisor_id, "E5")
+        self.assertEqual(
+            Employee.objects.get(snapshot=snap_b, employee_id="E4").raw_supervisor_id, "E1")
+        self.assertNotIn("E2", _flatten_ids(strip_aggregation(build_tree(snap_b.id))))
+
+    def test_removal_rejects_an_allocation_into_the_removed_subtree(self):
+        for reassign, fragment in (
+            ({"E3": "E2"}, "position being removed"),
+            ({"E3": "E3"}, "their own manager"),
+            ({"E3": "NOPE"}, "not in this org"),
+            ({"E6": "E5"}, "doesn't report to"),
+        ):
+            resp = self.commit([{"op": "eliminate", "employee_id": "E2",
+                                 "after": {"reassign": reassign}}])
+            self.assertEqual(resp.status_code, 422, reassign)
+            self.assertIn(fragment, resp.json()["errors"][0]["error"])
+        self.assertFalse(StructureCorrection.objects.exists())
+
+    def test_reverting_a_removal_puts_only_its_own_reports_back(self):
+        self.commit([{"op": "eliminate", "employee_id": "E2",
+                      "after": {"reassign": {"E3": "E5"}}}])
+        correction = StructureCorrection.objects.get(kind=StructureCorrection.Kind.ELIMINATE)
+        self.client.post(
+            reverse("org_view:api_revert_correction",
+                    kwargs={"slug": self.company.slug, "pk": correction.pk}),
+            data="{}", content_type="application/json")
+
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E2").raw_supervisor_id, "E1")
+        for eid in ("E3", "E4"):
+            self.assertEqual(
+                Employee.objects.get(snapshot=self.snap, employee_id=eid).raw_supervisor_id,
+                "E2", "both reports go back under the restored manager")
+        # E5's own report was never E2's and must not have been swept up.
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E6").raw_supervisor_id, "E5")
+
+    def test_exclude_no_longer_strands_the_excluded_manager_team(self):
+        """Regression: excluding a manager used to drop their whole team into
+        the orphan tray, because the reports kept pointing at a filtered id."""
+        before = self.client.get(self.url("api_unattached")).json()["counts"]["orphans"]
+        resp = self.commit([{"op": "exclude", "employee_id": "E2", "after": {}}])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        after = resp.json()["summary"]["counts"]["orphans"]
+        self.assertEqual(after, before, "no new orphans")
+        for eid in ("E3", "E4"):
+            self.assertIn(eid, _flatten_ids(strip_aggregation(build_tree(self.snap.id))))
+
+    def test_scenario_eliminate_honours_allocation(self):
+        scenario = S.create_scenario(company=self.company, base_snapshot=self.snap, name="R")
+        resp = self.post("api_commit_changeset", {
+            "target": "scenario", "scenario_id": scenario.id,
+            "ops": [{"op": "eliminate", "employee_id": "E2",
+                     "after": {"reassign": {"E3": "E5"}}}]})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(scenario.positions.get(employee_id="E3").raw_supervisor_id, "E5")
+        self.assertEqual(scenario.positions.get(employee_id="E4").raw_supervisor_id, "E1")
+        self.assertEqual(scenario.positions.get(employee_id="E3").prior_supervisor_id, "E2")
+
+    def test_scenario_mode_still_rejects_exclude(self):
+        """A duplicate row is a statement about the census, not about a reorg."""
+        scenario = S.create_scenario(company=self.company, base_snapshot=self.snap, name="R")
+        resp = self.post("api_commit_changeset", {
+            "target": "scenario", "scenario_id": scenario.id,
+            "ops": [{"op": "exclude", "employee_id": "E3", "after": {}}]})
         self.assertEqual(resp.status_code, 422)
-        self.assertIn("Correct mode", resp.json()["errors"][0]["error"])
+        self.assertIn("eliminate the position instead", resp.json()["errors"][0]["error"])
 
+    def test_correct_mode_allows_add(self):
         resp = self.commit([{
             "op": "add", "employee_id": "TMP-1",
             "after": {"employee_id": "51234", "first_name": "Mia", "last_name": "New",
@@ -919,6 +1014,108 @@ class ChangesetTests(OrgFixtureMixin, TestCase):
         ops = [{"op": "attribute", "employee_id": "E3", "after": {"city": str(i)}}
                for i in range(CS.MAX_OPS + 1)]
         self.assertEqual(self.commit(ops).status_code, 413)
+
+
+# ===========================================================================
+# Decorative grouping boxes
+# ===========================================================================
+
+class ChartGroupTests(OrgFixtureMixin, TestCase):
+    """Grouping is presentational: it must change nothing about the data."""
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+        self.make_user("admin6", self.company, role="admin")
+        self.client.login(username="admin6", password="pw")
+
+    def url(self, name, **kw):
+        return reverse(f"org_view:{name}", kwargs={"slug": self.company.slug, **kw})
+
+    def save(self, **body):
+        payload = {"parent_employee_id": "E2", "name": "Field Service",
+                   "member_ids": ["E3", "E4"], "accent": "sage"}
+        payload.update(body)
+        return self.client.post(self.url("api_save_chart_group"),
+                                data=json.dumps(payload), content_type="application/json")
+
+    def test_group_round_trips_and_changes_no_reporting_line(self):
+        before = dict(Employee.objects.filter(snapshot=self.snap)
+                      .values_list("employee_id", "raw_supervisor_id"))
+        resp = self.save()
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        groups = self.client.get(self.url("api_chart_groups")).json()["groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["name"], "Field Service")
+        self.assertEqual(groups[0]["member_ids"], ["E3", "E4"])
+        self.assertEqual(groups[0]["accent"], "sage")
+
+        after = dict(Employee.objects.filter(snapshot=self.snap)
+                     .values_list("employee_id", "raw_supervisor_id"))
+        self.assertEqual(before, after, "a group must not touch the structure")
+        # …and it is not a correction.
+        self.assertFalse(StructureCorrection.objects.exists())
+
+    def test_group_survives_a_census_reupload(self):
+        """Keyed by employee_id, like corrections, so cleanup happens once."""
+        self.save()
+        snap_b = self.make_snapshot(self.company, label="Q2")
+        groups = self.client.get(self.url("api_chart_groups")).json()["groups"]
+        self.assertEqual(groups[0]["member_ids"], ["E3", "E4"])
+        self.assertTrue(Employee.objects.filter(snapshot=snap_b, employee_id="E3").exists())
+
+    def test_group_rejects_an_empty_name_or_membership(self):
+        self.assertEqual(self.save(name="  ").status_code, 400)
+        self.assertEqual(self.save(member_ids=[]).status_code, 400)
+        self.assertFalse(ChartGroup.objects.exists())
+
+    def test_group_name_must_be_unique_under_one_manager(self):
+        self.assertEqual(self.save().status_code, 200)
+        self.assertEqual(self.save(member_ids=["E3"]).status_code, 409)
+        # …but the same name under a different manager is fine.
+        self.assertEqual(
+            self.save(parent_employee_id="E1", member_ids=["E5"]).status_code, 200)
+
+    def test_updating_a_group_replaces_its_membership(self):
+        gid = self.save().json()["id"]
+        resp = self.save(id=gid, member_ids=["E3"], name="Service", accent="plum")
+        self.assertEqual(resp.status_code, 200)
+        g = ChartGroup.objects.get(pk=gid)
+        self.assertEqual(g.member_ids, ["E3"])
+        self.assertEqual(g.name, "Service")
+        self.assertEqual(g.accent, "plum")
+        self.assertEqual(ChartGroup.objects.count(), 1)
+
+    def test_ungrouping_removes_only_the_box(self):
+        gid = self.save().json()["id"]
+        resp = self.client.post(
+            self.url("api_delete_chart_group", pk=gid), data="{}",
+            content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(ChartGroup.objects.exists())
+        for eid in ("E3", "E4"):
+            self.assertEqual(
+                Employee.objects.get(snapshot=self.snap, employee_id=eid).raw_supervisor_id,
+                "E2", "members keep reporting exactly where they did")
+
+    def test_viewer_can_read_groups_but_not_change_them(self):
+        """Decluttering is a reading problem, so every role sees the boxes."""
+        self.save()
+        self.make_user("viewer3", self.company, role="viewer")
+        self.client.logout()
+        self.client.login(username="viewer3", password="pw")
+        self.assertEqual(self.client.get(self.url("api_chart_groups")).status_code, 200)
+        self.assertEqual(self.save(name="Sneaky").status_code, 403)
+
+    def test_branch_admin_cannot_group_outside_their_branch(self):
+        self.make_user("branch4", self.company, role="admin", branch="E2")
+        self.client.logout()
+        self.client.login(username="branch4", password="pw")
+        self.assertEqual(self.save().status_code, 200)
+        self.assertEqual(
+            self.save(parent_employee_id="E1", name="Execs", member_ids=["E5"]).status_code,
+            403)
 
 
 # ===========================================================================

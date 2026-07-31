@@ -1,8 +1,8 @@
 from django.contrib import admin
 
 from .models import (
-    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
-    ScenarioPosition, StructureCorrection,
+    AppPermission, CensusSnapshot, ChartGroup, Company, CorrectionReplayLog, Employee,
+    Scenario, ScenarioPosition, StructureCorrection,
 )
 
 
@@ -56,6 +56,17 @@ class StructureCorrectionAdmin(admin.ModelAdmin):
     list_display  = ("company", "employee_id", "kind", "replay_status", "is_active", "updated_at")
     list_filter   = ("company", "kind", "replay_status", "is_active")
     search_fields = ("employee_id", "note")
+
+
+@admin.register(ChartGroup)
+class ChartGroupAdmin(admin.ModelAdmin):
+    list_display  = ("name", "company", "parent_employee_id", "member_count", "accent", "updated_at")
+    list_filter   = ("company", "accent")
+    search_fields = ("name", "parent_employee_id")
+
+    def member_count(self, obj):
+        return len(obj.member_ids or [])
+    member_count.short_description = "Members"
 
 
 @admin.register(CorrectionReplayLog)

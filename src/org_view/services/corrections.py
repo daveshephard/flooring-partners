@@ -48,8 +48,13 @@ _STATUS = StructureCorrection.ReplayStatus
 #: someone under a new root can't transiently reference a supervisor set_root is
 #: about to clear.
 _REPLAY_ORDER = (
-    _KIND.ADD_PERSON, _KIND.EXCLUDE, _KIND.SET_ROOT, _KIND.REPARENT, _KIND.ATTRIBUTE,
+    _KIND.ADD_PERSON, _KIND.EXCLUDE, _KIND.ELIMINATE, _KIND.SET_ROOT,
+    _KIND.REPARENT, _KIND.ATTRIBUTE,
 )
+
+#: The two kinds that take someone off the chart. They differ only in what the
+#: ledger says they mean; the mechanics are identical.
+REMOVAL_KINDS = (_KIND.EXCLUDE, _KIND.ELIMINATE)
 
 
 # ---------------------------------------------------------------------------
@@ -94,10 +99,15 @@ def capture_before(employee: Employee, kind: str, after: dict) -> dict:
         return {"raw_supervisor_id": employee.raw_supervisor_id or None}
     if kind == _KIND.SET_ROOT:
         return {"raw_supervisor_id": employee.raw_supervisor_id or None}
-    if kind == _KIND.EXCLUDE:
+    if kind in REMOVAL_KINDS:
         return {
             "employee_status": employee.employee_status,
             "raw_supervisor_id": employee.raw_supervisor_id or None,
+            # Filled in by _apply_removal — which reports were pulled up, and
+            # where from — so a revert puts exactly those people back and no
+            # others. It has to be recorded because "everyone now reporting to
+            # the manager" can't tell them apart after the fact.
+            "reports": {},
         }
     if kind == _KIND.ATTRIBUTE:
         return {f: getattr(employee, f) for f in after if f in CORRECTABLE_FIELDS}
@@ -159,12 +169,8 @@ def apply_correction(correction: StructureCorrection, snapshot: CensusSnapshot) 
         emp.save(update_fields=["raw_supervisor_id", "supervisor"])
         return status, detail
 
-    if kind == _KIND.EXCLUDE:
-        emp.employee_status = Employee.EXCLUDED_STATUS
-        emp.raw_supervisor_id = None
-        emp.supervisor = None
-        emp.save(update_fields=["employee_status", "raw_supervisor_id", "supervisor"])
-        return _STATUS.APPLIED, ""
+    if kind in REMOVAL_KINDS:
+        return _apply_removal(correction, snapshot, emp)
 
     if kind == _KIND.ATTRIBUTE:
         fields = [f for f in after if f in CORRECTABLE_FIELDS]
@@ -177,6 +183,64 @@ def apply_correction(correction: StructureCorrection, snapshot: CensusSnapshot) 
         return status, detail
 
     return _STATUS.CONFLICT, f"Unknown correction kind '{kind}'."
+
+
+def _apply_removal(correction, snapshot, emp) -> tuple[str, str]:
+    """Take someone off the chart and re-home their direct reports.
+
+    Each report goes wherever ``after["reassign"]`` says, falling back to the
+    removed person's own manager — the same default ``eliminate_position`` has
+    always used. Without re-homing them at all the reports would keep pointing at
+    an id ``_fetch_employees`` no longer returns, so removing one manager would
+    silently strand their whole team in the orphan tray.
+
+    The fallback matters on replay: next month's census may hang reports off this
+    person that nobody has allocated yet, and they still must land somewhere.
+
+    Records what it moved in ``before["reports"]`` so a revert restores exactly
+    those people and nobody else.
+    """
+    default_parent = emp.raw_supervisor_id or None
+    reassign = (correction.after or {}).get("reassign") or {}
+    reports = list(
+        Employee.objects.filter(snapshot=snapshot, raw_supervisor_id=emp.employee_id)
+        .exclude(employee_status=Employee.EXCLUDED_STATUS)
+    )
+    present = set(
+        Employee.objects.filter(snapshot=snapshot)
+        .exclude(employee_status=Employee.EXCLUDED_STATUS)
+        .values_list("employee_id", flat=True)
+    )
+    moved = {r.employee_id: emp.employee_id for r in reports}
+    for child in reports:
+        wanted = (reassign.get(child.employee_id) or "").strip() or None
+        # An allocation target can disappear between censuses; fall back rather
+        # than stranding the person a second time.
+        if wanted and wanted not in present:
+            wanted = None
+        child.raw_supervisor_id = wanted or default_parent
+        child.save(update_fields=["raw_supervisor_id"])
+
+    before = dict(correction.before or {})
+    before["reports"] = moved
+    if before != (correction.before or {}):
+        correction.before = before
+        correction.save(update_fields=["before", "updated_at"])
+
+    emp.employee_status = Employee.EXCLUDED_STATUS
+    emp.raw_supervisor_id = None
+    emp.supervisor = None
+    emp.save(update_fields=["employee_status", "raw_supervisor_id", "supervisor"])
+
+    if moved:
+        allocated = sum(1 for c in moved if reassign.get(c))
+        where = (f"{allocated} to a chosen manager, " if allocated else "")
+        rest = len(moved) - allocated
+        if rest:
+            where += (f"{rest} up to {default_parent}" if default_parent
+                      else f"{rest} to the top of the org")
+        return _STATUS.APPLIED, f"{len(moved)} report(s) moved — {where.rstrip(', ')}."
+    return _STATUS.APPLIED, ""
 
 
 def _apply_add_person(correction, snapshot, emp) -> tuple[str, str]:
@@ -309,6 +373,20 @@ def revert_correction(correction: StructureCorrection, snapshot: CensusSnapshot)
                 fields.append(key)
         if fields:
             emp.save(update_fields=fields)
+
+        # Put back exactly the reports this removal moved, and only if they are
+        # still where it put them. Two things to get right: an allocated report
+        # sits at its chosen destination rather than the fallback, and anyone a
+        # later edit has moved elsewhere must be left alone rather than yanked
+        # back. Both are why we filter on the expected current parent.
+        if correction.kind in REMOVAL_KINDS:
+            reassign = (correction.after or {}).get("reassign") or {}
+            fallback = emp.raw_supervisor_id or None
+            for child_id, prior in (before.get("reports") or {}).items():
+                placed = (reassign.get(child_id) or "").strip() or fallback
+                Employee.objects.filter(
+                    snapshot=snapshot, employee_id=child_id, raw_supervisor_id=placed,
+                ).update(raw_supervisor_id=prior)
 
     correction.is_active = False
     correction.replay_detail = "Reverted."

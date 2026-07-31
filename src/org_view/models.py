@@ -297,6 +297,12 @@ class StructureCorrection(models.Model):
         # wrong about it — which is why it belongs in Correct mode alongside the
         # other four rather than in a scenario.
         ADD_PERSON = "add_person", "Add missing person"
+        # The role is gone — the person left, or the position was closed and the
+        # export hasn't caught up. Distinct from EXCLUDE, which is for a row that
+        # should never have been on the chart (a duplicate or a ghost record).
+        # Both pull the person's reports up a level; the ledger records which
+        # judgement was made.
+        ELIMINATE  = "eliminate",  "Eliminate position"
 
     class ReplayStatus(models.TextChoices):
         APPLIED  = "applied",  "Applied"
@@ -358,6 +364,57 @@ class StructureCorrection(models.Model):
 
     def __str__(self):
         return f"{self.company.name} — {self.employee_id} [{self.get_kind_display()}]"
+
+
+class ChartGroup(models.Model):
+    """A decorative box that collects some of one manager's direct reports.
+
+    Purely presentational — it changes no reporting line, no metric and no
+    stored field on anyone. A manager with thirty direct reports is unreadable;
+    this lets you fold them into named teams ("Commercial Sales", "Accounts
+    Payable") that collapse to a single box showing headcount and cost, and
+    expand to the ordinary cards underneath.
+
+    Deliberately *not* part of the corrections layer: a correction asserts the
+    census got something wrong, whereas a group asserts nothing about the data at
+    all. That's also why groups save immediately instead of going through the
+    pending changeset — there is nothing to review.
+
+    Keyed by ``employee_id`` like corrections, so a grouping survives a census
+    re-upload. Members who aren't in the current census, or who no longer report
+    to ``parent_employee_id``, are simply not drawn.
+    """
+
+    class Accent(models.TextChoices):
+        SAND  = "sand",  "Sand"
+        SAGE  = "sage",  "Sage"
+        SLATE = "slate", "Slate"
+        PLUM  = "plum",  "Plum"
+
+    company            = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="chart_groups")
+    #: The manager whose children this box sits among.
+    parent_employee_id = models.CharField(max_length=50, db_index=True)
+    name               = models.CharField(max_length=100)
+    #: employee_ids of the direct reports folded into this box.
+    member_ids         = models.JSONField(default=list, blank=True)
+    accent             = models.CharField(max_length=20, choices=Accent.choices, default=Accent.SAND)
+    collapsed_by_default = models.BooleanField(
+        default=True, help_text="Decluttering only helps if the box starts closed.",
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["parent_employee_id", "name"]
+        unique_together = [("company", "parent_employee_id", "name")]
+        indexes = [models.Index(fields=["company", "parent_employee_id"])]
+
+    def __str__(self):
+        return f"{self.company.name} — {self.name} ({len(self.member_ids)} members)"
 
 
 class CorrectionReplayLog(models.Model):

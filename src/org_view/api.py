@@ -15,8 +15,8 @@ from django.views.decorators.http import require_GET, require_POST
 from accounts.decorators import app_access_required
 
 from .models import (
-    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
-    StructureCorrection,
+    AppPermission, CensusSnapshot, ChartGroup, Company, CorrectionReplayLog, Employee,
+    Scenario, StructureCorrection,
 )
 from .services import changeset as changeset_svc
 from .services import corrections as corrections_svc
@@ -875,6 +875,122 @@ def api_unattached(request, slug):
 
 
 # ---------------------------------------------------------------------------
+# Decorative chart groups
+# ---------------------------------------------------------------------------
+
+def _group_payload(company):
+    return {"groups": [
+        {
+            "id": g.id,
+            "parent_employee_id": g.parent_employee_id,
+            "name": g.name,
+            "member_ids": g.member_ids or [],
+            "accent": g.accent,
+            "collapsed_by_default": g.collapsed_by_default,
+        }
+        for g in ChartGroup.objects.filter(company=company)
+    ]}
+
+
+@require_GET
+@app_access_required("org-view")
+def api_chart_groups(request, slug):
+    """Grouping boxes are a reading aid, so every role can see them."""
+    company, perm, denied = _editing_context(request, slug, require_edit=False)
+    if denied:
+        return denied
+    return JsonResponse(_group_payload(company))
+
+
+@require_POST
+@app_access_required("org-view")
+def api_save_chart_group(request, slug):
+    """Create or update a group.
+
+    Saved immediately rather than staged: a group asserts nothing about the data,
+    so there is nothing for the review modal to review.
+    """
+    company, perm, denied = _editing_context(request, slug)
+    if denied:
+        return denied
+    try:
+        body = _json.loads(request.body or b"{}")
+    except (ValueError, _json.JSONDecodeError):
+        return _error("Invalid JSON.", 400)
+
+    name = str(body.get("name") or "").strip()[:100]
+    parent = str(body.get("parent_employee_id") or "").strip()
+    members = [str(m).strip() for m in (body.get("member_ids") or []) if str(m).strip()]
+    accent = body.get("accent") or ChartGroup.Accent.SAND
+    if accent not in ChartGroup.Accent.values:
+        accent = ChartGroup.Accent.SAND
+    if not name:
+        return _error("Give the group a name.", 400)
+    if not parent:
+        return _error("A group has to belong to a manager.", 400)
+    if not members:
+        return _error("Pick at least one person for the group.", 400)
+
+    # A branch-restricted editor can only group inside their own branch.
+    if perm.branch_root_employee_id:
+        snap = _active_snapshot(company)
+        allowed = _subtree_ids(
+            build_tree(snap.id, root_employee_id=perm.branch_root_employee_id)
+        ) if snap else set()
+        if parent not in allowed or any(m not in allowed for m in members):
+            return _error("That group is outside the part of the org you can edit.", 403)
+
+    group = None
+    if body.get("id"):
+        group = ChartGroup.objects.filter(company=company, id=body["id"]).first()
+        if not group:
+            return _error("Group not found.", 404)
+
+    if group is None:
+        clash = ChartGroup.objects.filter(
+            company=company, parent_employee_id=parent, name=name,
+        ).first()
+        if clash:
+            return _error(f"There's already a group called '{name}' here.", 409)
+        group = ChartGroup(company=company, created_by=request.user)
+
+    group.parent_employee_id = parent
+    group.name = name
+    group.member_ids = members
+    group.accent = accent
+    group.collapsed_by_default = bool(body.get("collapsed_by_default", True))
+    group.save()
+
+    return JsonResponse({"ok": True, "id": group.id, **_group_payload(company)})
+
+
+@require_POST
+@app_access_required("org-view")
+def api_delete_chart_group(request, slug, pk):
+    """Ungroup — the box disappears and its members render as ordinary cards."""
+    company, perm, denied = _editing_context(request, slug)
+    if denied:
+        return denied
+    group = ChartGroup.objects.filter(company=company, pk=pk).first()
+    if not group:
+        return _error("Group not found.", 404)
+    group.delete()
+    return JsonResponse({"ok": True, **_group_payload(company)})
+
+
+def _subtree_ids(tree):
+    ids = set()
+    stack = list(tree) if isinstance(tree, list) else [tree]
+    while stack:
+        node = stack.pop()
+        if not node:
+            continue
+        ids.add(node["employee_id"])
+        stack.extend(node.get("children") or [])
+    return ids
+
+
+# ---------------------------------------------------------------------------
 # GET /org-view/api/companies/<slug>/corrections/
 # ---------------------------------------------------------------------------
 
@@ -910,8 +1026,12 @@ def _correction_labels(correction, names):
     if kind == K.SET_ROOT:
         return (f"reported to {_who(names, before.get('raw_supervisor_id'))}",
                 "top of org — reports to nobody")
-    if kind == K.EXCLUDE:
-        return ("on the chart", "excluded from the chart")
+    if kind in (K.EXCLUDE, K.ELIMINATE):
+        moved = len(before.get("reports") or {})
+        tail = f"; {moved} report(s) moved up" if moved else ""
+        return ("on the chart",
+                ("excluded as a duplicate or ghost row" if kind == K.EXCLUDE
+                 else "position eliminated") + tail)
     if kind == K.ADD_PERSON:
         name = f"{after.get('first_name', '')} {after.get('last_name', '')}".strip()
         title = after.get("job_title") or ""
