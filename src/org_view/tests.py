@@ -1,16 +1,27 @@
+import json
 from decimal import Decimal
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
+from django.urls import reverse
 
-from accounts.models import CompanyProfile
+from accounts.models import AppDefinition, CompanyProfile, UserProfile
 
 from .models import (
-    AppPermission, CensusSnapshot, Company, Employee, Scenario, ScenarioPosition,
+    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
+    ScenarioPosition, StructureCorrection,
 )
+from .services import changeset as CS
+from .services import corrections as C
 from .services import scenarios as S
 from .services.company_sync import ensure_org_view_company, sync_from_accounts
+from .services.costing import cost_of
+from .services.tree_builder import (
+    _build_lookups, build_tree, build_tree_from_rows, detect_cycles, strip_aggregation,
+)
 
 
 class CompanySyncTests(TestCase):
@@ -53,46 +64,6 @@ class CompanySyncTests(TestCase):
     def test_signal_creates_company_on_profile_save(self):
         CompanyProfile.objects.create(name="Signal Co", is_active=True)
         self.assertTrue(Company.objects.filter(slug="signal-co").exists())
-
-
-class MergeCompaniesTests(TestCase):
-    def setUp(self):
-        User = get_user_model()
-        self.u1 = User.objects.create_user("u1")
-        self.u2 = User.objects.create_user("u2")
-        self.dup = Company.objects.create(name="Omega", slug="omega")
-        self.keep = Company.objects.create(name="Omega Fitness", slug="omega-fitness")
-
-    def test_merge_moves_snapshots_and_deletes_dup(self):
-        snap = CensusSnapshot.objects.create(
-            company=self.dup, original_filename="c.csv", status=CensusSnapshot.Status.ACTIVE,
-        )
-        AppPermission.objects.create(user=self.u1, company=self.dup, role="admin")
-        call_command("merge_org_view_companies", **{"from_id": self.dup.pk, "into_id": self.keep.pk})
-
-        self.assertFalse(Company.objects.filter(pk=self.dup.pk).exists())
-        snap.refresh_from_db()
-        self.assertEqual(snap.company_id, self.keep.pk)
-        self.assertTrue(AppPermission.objects.filter(user=self.u1, company=self.keep).exists())
-
-    def test_merge_drops_conflicting_permission(self):
-        # Both companies grant u1 — the keeper's must survive, the dup's is dropped.
-        AppPermission.objects.create(user=self.u1, company=self.dup, role="viewer")
-        AppPermission.objects.create(user=self.u1, company=self.keep, role="admin")
-        AppPermission.objects.create(user=self.u2, company=self.dup, role="viewer")
-        call_command("merge_org_view_companies", **{"from_id": self.dup.pk, "into_id": self.keep.pk})
-
-        self.assertEqual(AppPermission.objects.filter(user=self.u1, company=self.keep).count(), 1)
-        self.assertEqual(
-            AppPermission.objects.get(user=self.u1, company=self.keep).role, "admin")
-        self.assertTrue(AppPermission.objects.filter(user=self.u2, company=self.keep).exists())
-
-    def test_dry_run_changes_nothing(self):
-        CensusSnapshot.objects.create(company=self.dup, original_filename="c.csv")
-        call_command("merge_org_view_companies",
-                     **{"from_id": self.dup.pk, "into_id": self.keep.pk, "dry_run": True})
-        self.assertTrue(Company.objects.filter(pk=self.dup.pk).exists())
-        self.assertEqual(CensusSnapshot.objects.filter(company=self.dup).count(), 1)
 
 
 class ScenarioEngineTests(TestCase):
@@ -182,3 +153,840 @@ class ScenarioEngineTests(TestCase):
         result = S.eliminate_position(pos)
         self.assertIsNone(result)
         self.assertEqual(sc.positions.count(), 4)
+
+
+# ===========================================================================
+# Shared fixtures for the editing work
+# ===========================================================================
+
+class OrgFixtureMixin:
+    """A small, deliberately messy census.
+
+    E1 (CEO)
+      ├─ E2 (VP Ops) ─ E3, E4
+      └─ E5 (CFO)    ─ E6
+    X1 points at a supervisor who isn't in the file — the commonest defect, and
+    the reason X1 is invisible on today's chart.
+    """
+
+    ROWS = [
+        # eid,  first, last,    supervisor, title,        salary,   loaded
+        ("E1", "Ada",  "Root",   None,   "CEO",          "300000", "380000"),
+        ("E2", "Bo",   "Vice",   "E1",   "VP Ops",       "200000", None),
+        ("E3", "Cy",   "One",    "E2",   "Technician",   "100000", "128000"),
+        ("E4", "Di",   "Two",    "E2",   "Technician",   "110000", None),
+        ("E5", "El",   "Three",  "E1",   "CFO",          "250000", "310000"),
+        ("E6", "Fi",   "Four",   "E5",   "Accountant",   "85000",  None),
+        ("X1", "Zed",  "Lost",   "9999", "Route Super",  "95000",  None),
+    ]
+
+    def make_company(self, name="Flooring Partners", slug="flooring-partners"):
+        return Company.objects.create(name=name, slug=slug)
+
+    def make_snapshot(self, company, rows=None, label="Q1", current=True):
+        snap = CensusSnapshot.objects.create(
+            company=company, label=label, original_filename="census.csv",
+            status=CensusSnapshot.Status.ACTIVE, is_current=current,
+        )
+        for eid, fn, ln, sup, title, salary, loaded in (rows if rows is not None else self.ROWS):
+            Employee.objects.create(
+                snapshot=snap, employee_id=eid, first_name=fn, last_name=ln,
+                raw_supervisor_id=sup, job_title=title,
+                annual_salary=Decimal(salary) if salary else None,
+                fully_loaded_cost=Decimal(loaded) if loaded else None,
+                raw_data={"employee_id": eid, "supervisor_id": sup or ""},
+            )
+        snap.employee_count = snap.employees.count()
+        snap.save(update_fields=["employee_count"])
+        C.resolve_supervisor_fks(snap)
+        return snap
+
+    def make_user(self, username, company, role="admin", branch=None, staff=False):
+        User = get_user_model()
+        user = User.objects.create_user(username, password="pw", is_staff=staff)
+        profile_company, _ = CompanyProfile.objects.get_or_create(name="Test Co")
+        profile = UserProfile.objects.create(user=user, company=profile_company)
+        app = AppDefinition.objects.filter(slug="org-view").first()
+        if app:
+            profile.assigned_apps.add(app)
+        if not staff:
+            AppPermission.objects.create(
+                user=user, company=company, role=role, branch_root_employee_id=branch,
+            )
+        return user
+
+    def correction(self, company, employee_id, kind, before, after, **kw):
+        return StructureCorrection.objects.create(
+            company=company, employee_id=employee_id, kind=kind,
+            before=before, after=after, **kw,
+        )
+
+
+def _flatten_ids(tree):
+    ids = set()
+    stack = list(tree) if isinstance(tree, list) else [tree]
+    while stack:
+        n = stack.pop()
+        ids.add(n["employee_id"])
+        stack.extend(n.get("children") or [])
+    return ids
+
+
+# ===========================================================================
+# Phase 6 §1 — the load-bearing tree_builder fixes
+# ===========================================================================
+
+class TreeBuilderFixTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+
+    def test_cost_definition_is_shared(self):
+        """tree_builder and scenarios must agree where the two columns differ.
+
+        Before this fix the chart card summed annual_salary while the scenario
+        impact panel summed fully_loaded_cost, so the two could never reconcile.
+        """
+        snap = self.make_snapshot(self.company)
+        tree = strip_aggregation(build_tree(snap.id))
+        scenario = S.create_scenario(company=self.company, base_snapshot=snap, name="X")
+        summary = S.scenario_summary(scenario)
+
+        # X1 is unreachable, so the chart's root rollup excludes it; compare like
+        # for like by subtracting it from the scenario baseline.
+        x1_cost = cost_of({"fully_loaded_cost": None, "annual_salary": Decimal("95000")})
+        self.assertEqual(
+            Decimal(str(tree["metrics"]["total_labor_cost"])),
+            summary["baseline"]["total_cost"] - x1_cost,
+        )
+        # And the rollup must use loaded cost where present, not salary.
+        self.assertEqual(tree["metrics"]["total_labor_cost"], 1213000.0)
+
+    def test_build_tree_survives_cycle(self):
+        """A supervisor loop used to recurse forever — a hung worker, not an error."""
+        rows = [
+            ("A", "A", "One",   "C",  "Mgr", "100", None),
+            ("B", "B", "Two",   "A",  "Mgr", "100", None),
+            ("C", "C", "Three", "B",  "Mgr", "100", None),
+            ("R", "R", "Root",  None, "CEO", "100", None),
+        ]
+        snap = self.make_snapshot(self.company, rows=rows)
+        report = {}
+        tree = build_tree(snap.id, report=report)   # must return, not hang
+        self.assertIsNotNone(tree)
+        self.assertEqual(len(report["cycles"]), 1)
+        self.assertEqual(set(report["cycles"][0]), {"A", "B", "C"})
+        for eid in ("A", "B", "C"):
+            self.assertEqual(report["unreachable"][eid], "in_cycle")
+
+    def test_unreachable_rows_reported_with_reasons(self):
+        rows = [
+            ("R",  "R", "Root",   None,   "CEO", "100", None),
+            ("K",  "K", "Kid",    "R",    "IC",  "100", None),
+            ("O1", "O", "Orphan", "NOPE", "IC",  "100", None),   # supervisor_not_found
+            ("O2", "O", "Second", None,   "IC",  "100", None),   # extra_root
+            ("O3", "O", "Selfy",  "O3",   "IC",  "100", None),   # self_referential
+            ("C1", "C", "Loop1",  "C2",   "IC",  "100", None),   # in_cycle
+            ("C2", "C", "Loop2",  "C1",   "IC",  "100", None),
+        ]
+        emp_rows = [{
+            "employee_id": eid, "first_name": fn, "last_name": ln,
+            "raw_supervisor_id": sup, "job_title": t, "management_level": "",
+            "department": "", "entity": "", "city": "", "state": "",
+            "site_location": "", "employee_type": "", "pay_type": "",
+            "annual_salary": sal, "fully_loaded_cost": loaded,
+            "is_overhead": None, "revenue_attribution": None,
+        } for eid, fn, ln, sup, t, sal, loaded in rows]
+
+        _, _, natural_roots, unreachable = _build_lookups(emp_rows)
+        self.assertEqual(unreachable["O1"], "supervisor_not_found")
+        self.assertEqual(unreachable["O2"], "extra_root")
+        self.assertEqual(unreachable["O3"], "self_referential")
+        self.assertEqual(unreachable["C1"], "in_cycle")
+        self.assertEqual(unreachable["C2"], "in_cycle")
+        self.assertNotIn("K", unreachable)
+        self.assertEqual(natural_roots[0], "R")
+
+    def test_revenue_rolls_up_across_three_levels(self):
+        """06 §3b: `_agg["revenue_sum"]` reads like a double-counting risk.
+
+        Traced here across three levels with revenue on some nodes and not
+        others. It is correct — `revenue_sum` re-derives from the already-summed
+        `revenue_managed` for non-leaves, and each parent adds only its own
+        `self_revenue` plus its children's sums. Recorded as a test so the next
+        person doesn't have to re-derive it.
+
+        metrics.js still leaves revenue to the server (see its docstring); this
+        test is what would have to pass before that changes.
+        """
+        rows = [{
+            "employee_id": eid, "first_name": eid, "last_name": "X",
+            "raw_supervisor_id": sup, "job_title": "", "management_level": "",
+            "department": "", "entity": "", "city": "", "state": "",
+            "site_location": "", "employee_type": "", "pay_type": "",
+            "annual_salary": None, "fully_loaded_cost": None,
+            "is_overhead": None, "revenue_attribution": rev,
+        } for eid, sup, rev in [
+            ("R",  None, "100"),   # root has its own revenue
+            ("M1", "R",  None),    # middle manager has none
+            ("M2", "R",  "50"),
+            ("L1", "M1", "200"),
+            ("L2", "M1", "300"),
+            ("L3", "M2", None),    # leaf with none
+        ]]
+        tree = strip_aggregation(build_tree_from_rows(rows))
+        by_id = {}
+        stack = [tree]
+        while stack:
+            n = stack.pop()
+            by_id[n["employee_id"]] = n["metrics"]["revenue_managed"]
+            stack.extend(n["children"])
+
+        self.assertEqual(by_id["L1"], 200.0)
+        self.assertIsNone(by_id["L3"], "a leaf with no revenue reports None, not 0")
+        self.assertEqual(by_id["M1"], 500.0, "sum of its two leaves, none of its own")
+        self.assertEqual(by_id["M2"], 50.0, "its own only; its leaf has none")
+        self.assertEqual(by_id["R"], 650.0, "100 + 500 + 50 — no double counting")
+
+    def test_detect_cycles_is_iterative_on_a_long_chain(self):
+        """800 nodes must not blow the stack — this is why it isn't recursive."""
+        parent = {f"E{i}": (f"E{i - 1}" if i else None) for i in range(800)}
+        self.assertEqual(detect_cycles(parent), [])
+        parent["E0"] = "E799"          # close the loop
+        cycles = detect_cycles(parent)
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(len(cycles[0]), 800)
+
+
+# ===========================================================================
+# Phase 1 — corrections layer and replay
+# ===========================================================================
+
+class CorrectionsTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+        self.user = self.make_user("admin1", self.company, staff=True)
+
+    def _reparent(self, eid, before, after, **kw):
+        return self.correction(
+            self.company, eid, StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": before}, {"raw_supervisor_id": after}, **kw,
+        )
+
+    def test_reparent_correction_applies(self):
+        c = self._reparent("E3", "E2", "E5")
+        status, _ = C.apply_correction(c, self.snap)
+        C.resolve_supervisor_fks(self.snap)
+        self.assertEqual(status, StructureCorrection.ReplayStatus.APPLIED)
+        emp = Employee.objects.get(snapshot=self.snap, employee_id="E3")
+        self.assertEqual(emp.raw_supervisor_id, "E5")
+        self.assertEqual(emp.supervisor.employee_id, "E5")
+
+    def test_correction_replays_to_new_snapshot(self):
+        self._reparent("E3", "E2", "E5")
+        snap_b = self.make_snapshot(self.company, label="Q2")
+        log = C.replay_corrections(snap_b, user=self.user)
+        self.assertEqual(log.applied_count, 1)
+        emp = Employee.objects.get(snapshot=snap_b, employee_id="E3")
+        self.assertEqual(emp.raw_supervisor_id, "E5")
+        self.assertEqual(emp.supervisor.employee_id, "E5")
+
+    def test_replay_marks_stale_when_person_gone(self):
+        c = self._reparent("E3", "E2", "E5")
+        rows = [r for r in self.ROWS if r[0] != "E3"]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+        c.refresh_from_db()
+        self.assertEqual(log.stale_count, 1)
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.STALE)
+        self.assertFalse(c.is_active)
+        snap_b.refresh_from_db()
+        self.assertEqual(snap_b.status, CensusSnapshot.Status.ACTIVE)
+
+    def test_replay_marks_conflict_when_target_gone(self):
+        c = self._reparent("E3", "E2", "E5")
+        rows = [r for r in self.ROWS if r[0] not in ("E5", "E6")]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+        c.refresh_from_db()
+        self.assertEqual(log.conflict_count, 1)
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.CONFLICT)
+        self.assertTrue(c.is_active, "a conflict is a to-do, not a retirement")
+        self.assertEqual(
+            Employee.objects.get(snapshot=snap_b, employee_id="E3").raw_supervisor_id, "E2")
+
+    def test_replay_marks_drifted_when_source_changed(self):
+        c = self._reparent("E3", "E2", "E5")
+        # The next census says E3 reports to E1 — different from `before` (E2).
+        rows = [r if r[0] != "E3" else ("E3", "Cy", "One", "E1", "Technician", "100000", "128000")
+                for r in self.ROWS]
+        snap_b = self.make_snapshot(self.company, rows=rows, label="Q2")
+        log = C.replay_corrections(snap_b)
+        c.refresh_from_db()
+        self.assertEqual(log.drifted_count, 1)
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.DRIFTED)
+        # Drifted still applies — the human decision outranks the export.
+        self.assertEqual(
+            Employee.objects.get(snapshot=snap_b, employee_id="E3").raw_supervisor_id, "E5")
+
+    def test_replay_rejects_cycle(self):
+        """Two reparents that individually validate but jointly cycle."""
+        self._reparent("E2", "E1", "E4")   # VP under one of their own reports
+        self._reparent("E4", "E2", "E3")   # …which still sits under the VP
+        snap_b = self.make_snapshot(self.company, label="Q2")
+        log = C.replay_corrections(snap_b)
+        self.assertGreaterEqual(log.conflict_count, 1)
+        parent = dict(
+            Employee.objects.filter(snapshot=snap_b)
+            .values_list("employee_id", "raw_supervisor_id"))
+        self.assertEqual(detect_cycles(parent), [], "no cycle may survive replay")
+        build_tree(snap_b.id)   # must return rather than hang
+
+    def test_revert_restores_original(self):
+        c = self._reparent("E3", "E2", "E5")
+        C.apply_correction(c, self.snap)
+        C.revert_correction(c, self.snap)
+        c.refresh_from_db()
+        emp = Employee.objects.get(snapshot=self.snap, employee_id="E3")
+        self.assertEqual(emp.raw_supervisor_id, "E2")
+        self.assertEqual(emp.supervisor.employee_id, "E2")
+        self.assertFalse(c.is_active)
+        self.assertTrue(StructureCorrection.objects.filter(pk=c.pk).exists())
+
+    def test_exclude_removes_from_tree(self):
+        c = self.correction(
+            self.company, "E4", StructureCorrection.Kind.EXCLUDE,
+            {"employee_status": "", "raw_supervisor_id": "E2"}, {},
+        )
+        C.apply_correction(c, self.snap)
+        tree = strip_aggregation(build_tree(self.snap.id))
+        self.assertNotIn("E4", _flatten_ids(tree))
+        self.assertTrue(Employee.objects.filter(snapshot=self.snap, employee_id="E4").exists())
+
+    def test_unique_together_updates_not_stacks(self):
+        user = self.make_user("editor", self.company, staff=True)
+        for target in ("E5", "E1"):
+            CS.commit_changeset(
+                [{"op": "reparent", "employee_id": "E3",
+                  "after": {"raw_supervisor_id": target}, "note": ""}],
+                target=CS.TARGET_CORRECTIONS, company=self.company,
+                snapshot=self.snap, user=user,
+            )
+        rows = StructureCorrection.objects.filter(
+            company=self.company, employee_id="E3",
+            kind=StructureCorrection.Kind.REPARENT)
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.first().after["raw_supervisor_id"], "E1")
+        # `before` must still be the *source* value, not the intermediate one.
+        self.assertEqual(rows.first().before["raw_supervisor_id"], "E2")
+
+    def test_replay_failure_does_not_block_upload(self):
+        """A bad correction must never stop a census refresh."""
+        from unittest.mock import patch
+        self._reparent("E3", "E2", "E5")
+        self.make_user("uploader", self.company, staff=True)
+        self.client.login(username="uploader", password="pw")
+
+        snap = CensusSnapshot.objects.create(
+            company=self.company, label="Q2", original_filename="c.csv",
+            status=CensusSnapshot.Status.PROCESSING,
+        )
+        session = self.client.session
+        session["ov_upload"] = {
+            "snapshot_id": snap.id, "company_id": self.company.id, "label": "Q2",
+            "original_filename": "c.csv", "mapping": {}, "errors": [], "warnings": [],
+            "set_as_active": True,
+            "mapped_rows": [
+                {"employee_id": "E1", "first_name": "Ada", "last_name": "Root",
+                 "supervisor_id": "", "job_title": "CEO"},
+            ],
+        }
+        session.save()
+
+        with patch.object(C, "replay_corrections", side_effect=RuntimeError("boom")):
+            resp = self.client.post(reverse("org_view:save_snapshot"))
+        self.assertEqual(resp.status_code, 302)
+        snap.refresh_from_db()
+        self.assertEqual(snap.status, CensusSnapshot.Status.ACTIVE)
+        self.assertTrue(snap.is_current)
+
+    def test_management_command_dry_run(self):
+        self._reparent("E3", "E2", "E5")
+        call_command("replay_corrections", company="Flooring Partners", dry_run=True)
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E3").raw_supervisor_id, "E2")
+        self.assertFalse(CorrectionReplayLog.objects.exists())
+
+
+# ===========================================================================
+# Phase 2 — the changeset API
+# ===========================================================================
+
+class ChangesetTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+        self.admin = self.make_user("admin2", self.company, role="admin")
+        self.client.login(username="admin2", password="pw")
+
+    def url(self, name, **kw):
+        return reverse(f"org_view:{name}", kwargs={"slug": self.company.slug, **kw})
+
+    def post(self, name, payload, **kw):
+        return self.client.post(
+            self.url(name, **kw), data=json.dumps(payload), content_type="application/json")
+
+    def commit(self, ops, **extra):
+        return self.post("api_commit_changeset",
+                         {"target": "corrections", "ops": ops, **extra})
+
+    def test_batch_cycle_rejected(self):
+        """Two individually-valid reparents that jointly cycle. The headline test."""
+        before = dict(Employee.objects.filter(snapshot=self.snap)
+                      .values_list("employee_id", "raw_supervisor_id"))
+        resp = self.commit([
+            {"op": "reparent", "employee_id": "E2", "after": {"raw_supervisor_id": "E3"}},
+            {"op": "reparent", "employee_id": "E3", "after": {"raw_supervisor_id": "E2"}},
+        ])
+        self.assertEqual(resp.status_code, 422)
+        self.assertTrue(any("loop" in e["error"] for e in resp.json()["errors"]))
+        after = dict(Employee.objects.filter(snapshot=self.snap)
+                     .values_list("employee_id", "raw_supervisor_id"))
+        self.assertEqual(before, after, "a rejected batch must write nothing")
+        self.assertFalse(StructureCorrection.objects.exists())
+
+    def test_atomic_rollback(self):
+        resp = self.commit([
+            {"op": "attribute", "employee_id": "E3", "after": {"job_title": "Lead Tech"}},
+            {"op": "attribute", "employee_id": "E4", "after": {"department": "Service"}},
+            {"op": "reparent",  "employee_id": "E6", "after": {"raw_supervisor_id": "E2"}},
+            {"op": "reparent",  "employee_id": "E4", "after": {"raw_supervisor_id": "NOPE"}},
+            {"op": "attribute", "employee_id": "E1", "after": {"city": "Tacoma"}},
+        ])
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E3").job_title, "Technician")
+        self.assertEqual(StructureCorrection.objects.count(), 0)
+
+    def test_unknown_field_is_error_not_silent_drop(self):
+        resp = self.commit([
+            {"op": "attribute", "employee_id": "E3", "after": {"bogus_field": "x"}}])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("bogus_field", resp.json()["errors"][0]["error"])
+
+    def test_correct_mode_rejects_add_and_eliminate(self):
+        for op in ("add", "eliminate"):
+            resp = self.commit([{"op": op, "employee_id": "E3", "after": {}}])
+            self.assertEqual(resp.status_code, 422, op)
+            self.assertIn("Correct mode", resp.json()["errors"][0]["error"])
+
+    def test_correct_mode_rejects_pay_fields(self):
+        resp = self.commit([
+            {"op": "attribute", "employee_id": "E3", "after": {"annual_salary": "1"}}])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("annual_salary", resp.json()["errors"][0]["error"])
+
+    def test_restricted_role_cannot_set_pay(self):
+        self.make_user("restricted1", self.company, role="restricted")
+        scenario = S.create_scenario(company=self.company, base_snapshot=self.snap, name="R")
+        self.client.logout()
+        self.client.login(username="restricted1", password="pw")
+        resp = self.post("api_commit_changeset", {
+            "target": "scenario", "scenario_id": scenario.id,
+            "ops": [{"op": "attribute", "employee_id": "E3",
+                     "after": {"annual_salary": "1"}}],
+        })
+        # A restricted user isn't an edit role at all, so it never reaches the
+        # whitelist — but the validator must refuse it independently too, since
+        # the old form only avoided this by accident (no pay inputs rendered).
+        self.assertEqual(resp.status_code, 403)
+        errors = CS.validate_changeset(
+            [{"op": "attribute", "employee_id": "E3", "after": {"annual_salary": "1"}}],
+            target=CS.TARGET_SCENARIO, scenario=scenario,
+            whitelist=S.EDITABLE_FIELDS, can_see_pay=False)
+        self.assertTrue(any("pay" in e["error"] for e in errors))
+
+    def test_branch_admin_cannot_reparent_outside_branch(self):
+        self.make_user("branchadmin", self.company, role="admin", branch="E2")
+        self.client.logout()
+        self.client.login(username="branchadmin", password="pw")
+        resp = self.commit([
+            {"op": "reparent", "employee_id": "E3", "after": {"raw_supervisor_id": "E5"}}])
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("outside", resp.json()["errors"][0]["error"])
+
+    def test_stale_snapshot_returns_409(self):
+        newer = self.make_snapshot(self.company, label="Q2")
+        resp = self.commit(
+            [{"op": "attribute", "employee_id": "E3", "after": {"job_title": "X"}}],
+            expected_snapshot_id=self.snap.id)
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["current_snapshot_id"], newer.id)
+        self.assertFalse(StructureCorrection.objects.exists())
+
+    def test_temp_id_mapping(self):
+        scenario = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Plan")
+        resp = self.post("api_commit_changeset", {
+            "target": "scenario", "scenario_id": scenario.id,
+            "ops": [
+                {"op": "add", "employee_id": "TMP-1",
+                 "after": {"raw_supervisor_id": "E1", "job_title": "VP Finance",
+                           "is_vacant": True}},
+                {"op": "reparent", "employee_id": "E5",
+                 "after": {"raw_supervisor_id": "TMP-1"}},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["id_map"], {"TMP-1": "NEW-1"})
+        self.assertEqual(scenario.positions.get(employee_id="E5").raw_supervisor_id, "NEW-1")
+
+    def test_commit_returns_fresh_tree_and_summary(self):
+        resp = self.commit([
+            {"op": "reparent", "employee_id": "E6", "after": {"raw_supervisor_id": "E2"}}])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        e2 = next(c for c in body["tree"]["children"] if c["employee_id"] == "E2")
+        self.assertIn("E6", [c["employee_id"] for c in e2["children"]])
+        fresh = strip_aggregation(build_tree(self.snap.id))
+        self.assertEqual(body["summary"]["counts"]["rendered"], len(_flatten_ids(fresh)))
+
+    def test_unattached_lists_orphan_with_missing_supervisor(self):
+        resp = self.client.get(self.url("api_unattached"))
+        self.assertEqual(resp.status_code, 200)
+        x1 = next(o for o in resp.json()["orphans"] if o["employee_id"] == "X1")
+        self.assertEqual(x1["reason"], "supervisor_not_found")
+        self.assertEqual(x1["raw_supervisor_id"], "9999")
+        self.assertNotIn("X1", _flatten_ids(strip_aggregation(build_tree(self.snap.id))))
+
+    def test_unattached_counts_reconcile(self):
+        c = self.correction(
+            self.company, "E4", StructureCorrection.Kind.EXCLUDE,
+            {"employee_status": "", "raw_supervisor_id": "E2"}, {})
+        C.apply_correction(c, self.snap)
+        counts = self.client.get(self.url("api_unattached")).json()["counts"]
+        self.assertEqual(
+            counts["rendered"] + counts["orphans"] + counts["excluded"],
+            counts["total_employees"])
+        self.assertEqual(counts["excluded"], 1)
+
+    def test_commit_redacts_pay_for_restricted(self):
+        self.make_user("restricted2", self.company, role="restricted")
+        self.client.logout()
+        self.client.login(username="restricted2", password="pw")
+        tree = self.client.get(self.url("api_org_tree")).json()["tree"]
+        self.assertIsNone(tree["metrics"]["total_labor_cost"])
+        self.assertIsNone(tree["self"]["cost"])
+
+    def test_validate_and_commit_reject_identically(self):
+        ops = [
+            {"op": "reparent", "employee_id": "E2", "after": {"raw_supervisor_id": "E3"}},
+            {"op": "reparent", "employee_id": "E3", "after": {"raw_supervisor_id": "E2"}},
+        ]
+        v = self.post("api_validate_changeset", {"target": "corrections", "ops": ops})
+        c = self.commit(ops)
+        self.assertEqual(v.status_code, 200)
+        self.assertFalse(v.json()["valid"])
+        self.assertEqual(c.status_code, 422)
+        self.assertEqual([e["error"] for e in v.json()["errors"]],
+                         [e["error"] for e in c.json()["errors"]])
+
+    def test_non_admin_gets_403_on_every_editing_endpoint(self):
+        self.make_user("viewer1", self.company, role="viewer")
+        self.client.logout()
+        self.client.login(username="viewer1", password="pw")
+        for name in ("api_validate_changeset", "api_commit_changeset"):
+            self.assertEqual(
+                self.post(name, {"target": "corrections", "ops": []}).status_code, 403, name)
+        c = self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"})
+        resp = self.client.post(
+            reverse("org_view:api_revert_correction",
+                    kwargs={"slug": self.company.slug, "pk": c.pk}),
+            data="{}", content_type="application/json")
+        self.assertEqual(resp.status_code, 403)
+        # …but the read endpoints stay open to any permission.
+        self.assertEqual(self.client.get(self.url("api_unattached")).status_code, 200)
+        self.assertEqual(self.client.get(self.url("api_corrections")).status_code, 200)
+
+    def test_unattached_orphan_carries_its_whole_cluster(self):
+        """An orphan can be a manager whose team is equally invisible.
+
+        The tray lists the cluster root once and ships its members, so attaching
+        the manager brings the team instead of silently stranding it.
+        """
+        for eid, sup in (("X1a", "X1"), ("X1b", "X1"), ("X1c", "X1a")):
+            Employee.objects.create(
+                snapshot=self.snap, employee_id=eid, first_name=eid, last_name="Team",
+                raw_supervisor_id=sup, job_title="Installer")
+        body = self.client.get(self.url("api_unattached")).json()
+
+        roots = [o["employee_id"] for o in body["orphans"]]
+        self.assertEqual(roots, ["X1"], "only the cluster root is listed")
+        x1 = body["orphans"][0]
+        self.assertEqual(x1["subtree_count"], 3)
+        self.assertEqual({p["employee_id"] for p in x1["cluster"]}, {"X1a", "X1b", "X1c"})
+        # counts still reconcile even though the list has one row for four people
+        c = body["counts"]
+        self.assertEqual(c["orphans"], 4)
+        self.assertEqual(c["rendered"] + c["orphans"] + c["excluded"], c["total_employees"])
+
+    def test_employee_raw_endpoint_redacts_pay_for_restricted(self):
+        emp = Employee.objects.get(snapshot=self.snap, employee_id="E3")
+        emp.raw_data = {"employee_id": "E3", "annual_salary": "100000", "dept": "Ops"}
+        emp.save(update_fields=["raw_data"])
+        url = reverse("org_view:api_employee_raw",
+                      kwargs={"slug": self.company.slug, "employee_id": "E3"})
+
+        raw = self.client.get(url).json()["raw_data"]
+        self.assertIn("annual_salary", raw)
+
+        self.make_user("restricted5", self.company, role="restricted")
+        self.client.logout()
+        self.client.login(username="restricted5", password="pw")
+        raw = self.client.get(url).json()["raw_data"]
+        self.assertNotIn("annual_salary", raw)
+        self.assertIn("dept", raw)
+
+    def test_oversized_batch_returns_413(self):
+        ops = [{"op": "attribute", "employee_id": "E3", "after": {"city": str(i)}}
+               for i in range(CS.MAX_OPS + 1)]
+        self.assertEqual(self.commit(ops).status_code, 413)
+
+
+# ===========================================================================
+# Phase 3 — the chart page and the client/server metric parity
+# ===========================================================================
+
+class ChartPageTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+
+    def chart(self, **params):
+        url = reverse("org_view:company_detail", kwargs={"slug": self.company.slug})
+        if params:
+            url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        return self.client.get(url)
+
+    def test_chart_page_renders_mode_switch_for_admin(self):
+        self.make_user("admin3", self.company, role="admin")
+        self.client.login(username="admin3", password="pw")
+        self.assertContains(self.chart(), "oc-mode-switch")
+
+        for username, role in (("viewer2", "viewer"), ("restricted3", "restricted")):
+            self.make_user(username, self.company, role=role)
+            self.client.logout()
+            self.client.login(username=username, password="pw")
+            self.assertNotContains(self.chart(), "oc-mode-switch")
+
+    def test_chart_page_config_has_no_pay_for_restricted(self):
+        self.make_user("restricted4", self.company, role="restricted")
+        self.client.login(username="restricted4", password="pw")
+        self.assertContains(self.chart(), "canSeePay:        false")
+
+    def test_chart_page_quotes_branch_root_id(self):
+        """An unquoted CharField badge would be a JS SyntaxError."""
+        self.make_user("branch2", self.company, role="admin", branch="E2")
+        self.client.login(username="branch2", password="pw")
+        self.assertContains(self.chart(), 'branchRootId:     "E2"')
+
+    def test_focus_query_param_accepted(self):
+        self.make_user("admin4", self.company, role="admin")
+        self.client.login(username="admin4", password="pw")
+        resp = self.chart(mode="correct", focus="E3")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'focusId:          "E3"')
+
+    def test_client_metrics_match_server(self):
+        """The Django half of the parity test.
+
+        The committed fixture's `expected` block is what tree_builder produced
+        when it was generated; metrics.parity.mjs asserts metrics.js reproduces
+        the same numbers. This half asserts the server hasn't drifted from it.
+        """
+        path = (Path(settings.BASE_DIR) / "static" / "org_view" / "js"
+                / "__tests__" / "fixture.tree.json")
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        tree = strip_aggregation(build_tree_from_rows([dict(r) for r in fixture["rows"]]))
+
+        checked = 0
+        stack = [tree]
+        while stack:
+            node = stack.pop()
+            self.assertEqual(node["metrics"], fixture["expected"][node["employee_id"]],
+                             node["employee_id"])
+            checked += 1
+            stack.extend(node["children"])
+        self.assertEqual(checked, len(fixture["expected"]))
+
+
+# ===========================================================================
+# Phase 5 — mode specifics, corrections review, the retired scenario page
+# ===========================================================================
+
+class ModesAndReviewTests(OrgFixtureMixin, TestCase):
+
+    def setUp(self):
+        self.company = self.make_company()
+        self.snap = self.make_snapshot(self.company)
+        self.admin = self.make_user("admin5", self.company, role="admin")
+        self.client.login(username="admin5", password="pw")
+
+    def url(self, name, **kw):
+        return reverse(f"org_view:{name}", kwargs={"slug": self.company.slug, **kw})
+
+    def test_correct_mode_summary_counts(self):
+        """2 orphans + 1 excluded, reconciling against the census total."""
+        Employee.objects.create(
+            snapshot=self.snap, employee_id="X2", first_name="Ann", last_name="Lost",
+            raw_supervisor_id="8888", job_title="Estimator")
+        self.snap.employee_count = self.snap.employees.count()
+        self.snap.save(update_fields=["employee_count"])
+        c = self.correction(
+            self.company, "E4", StructureCorrection.Kind.EXCLUDE,
+            {"employee_status": "", "raw_supervisor_id": "E2"}, {})
+        C.apply_correction(c, self.snap)
+
+        counts = self.client.get(self.url("api_unattached")).json()["counts"]
+        self.assertEqual(counts["total_employees"], 8)
+        self.assertEqual(counts["excluded"], 1)
+        self.assertEqual(counts["orphans"], 2)
+        self.assertEqual(counts["rendered"], 5)
+
+    def test_corrections_review_sorts_conflicts_first(self):
+        self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"},
+            replay_status=StructureCorrection.ReplayStatus.APPLIED)
+        self.correction(
+            self.company, "E4", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "GONE"},
+            replay_status=StructureCorrection.ReplayStatus.CONFLICT)
+        rows = self.client.get(self.url("api_corrections")).json()["corrections"]
+        self.assertEqual(rows[0]["employee_id"], "E4")
+        self.assertEqual(rows[0]["replay_status"], "conflict")
+        # Labels are resolved server-side so the client never maps ids to names.
+        self.assertIn("Bo Vice (E2)", rows[1]["before_label"])
+        self.assertIn("El Three (E5)", rows[1]["after_label"])
+
+    def test_revert_from_review_restores_value(self):
+        c = self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"})
+        C.apply_correction(c, self.snap)
+        resp = self.client.post(
+            reverse("org_view:api_revert_correction",
+                    kwargs={"slug": self.company.slug, "pk": c.pk}),
+            data="{}", content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        c.refresh_from_db()
+        self.assertFalse(c.is_active)
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E3").raw_supervisor_id, "E2")
+
+    def test_accept_source_deactivates_drifted(self):
+        """'Accept source' is a revert — the export now agrees, so retire the row."""
+        c = self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"},
+            replay_status=StructureCorrection.ReplayStatus.DRIFTED)
+        C.apply_correction(c, self.snap)
+        self.client.post(
+            reverse("org_view:api_revert_correction",
+                    kwargs={"slug": self.company.slug, "pk": c.pk}),
+            data="{}", content_type="application/json")
+        c.refresh_from_db()
+        self.assertFalse(c.is_active)
+
+    def test_keep_correction_clears_drift(self):
+        c = self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"},
+            replay_status=StructureCorrection.ReplayStatus.DRIFTED,
+            replay_detail="census now says E1")
+        resp = self.client.post(
+            reverse("org_view:api_keep_correction",
+                    kwargs={"slug": self.company.slug, "pk": c.pk}),
+            data="{}", content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        c.refresh_from_db()
+        self.assertEqual(c.replay_status, StructureCorrection.ReplayStatus.APPLIED)
+        self.assertEqual(c.replay_detail, "")
+        self.assertTrue(c.is_active)
+
+    def test_scenario_detail_redirects_to_chart(self):
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Reorg")
+        resp = self.client.get(reverse(
+            "org_view:scenario_detail",
+            kwargs={"slug": self.company.slug, "scenario_id": sc.id}))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp["Location"],
+                         f"/org-view/c/{self.company.slug}/?mode=scenario&scenario={sc.id}")
+
+    def test_branch_admin_scenario_tree_is_scoped(self):
+        """The privilege gap the old scenario_detail had — regression test.
+
+        api_scenario_tree honoured branch_root_employee_id; the HTML page ignored
+        it and rendered the whole company. Now the chart is the only scenario UI
+        and gets its tree from the API, so the gap closes by construction.
+        """
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Reorg")
+        self.make_user("branch3", self.company, role="admin", branch="E2")
+        self.client.logout()
+        self.client.login(username="branch3", password="pw")
+        tree = self.client.get(reverse(
+            "org_view:api_scenario_tree",
+            kwargs={"slug": self.company.slug, "scenario_id": sc.id})).json()["tree"]
+        self.assertEqual(tree["employee_id"], "E2")
+        self.assertEqual(_flatten_ids(tree), {"E2", "E3", "E4"})
+
+    def test_scenario_rename_works_from_chart_header(self):
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Old")
+        resp = self.client.post(
+            reverse("org_view:scenario_action",
+                    kwargs={"slug": self.company.slug, "scenario_id": sc.id}),
+            {"action": "rename", "name": "FY27 Reorg", "description": "Consolidate ops"})
+        self.assertEqual(resp.status_code, 302)
+        sc.refresh_from_db()
+        self.assertEqual(sc.name, "FY27 Reorg")
+        self.assertEqual(sc.description, "Consolidate ops")
+
+    def test_eliminate_records_prior_supervisor(self):
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Reorg")
+        S.eliminate_position(sc.positions.get(employee_id="E2"))
+        for eid in ("E3", "E4"):
+            child = sc.positions.get(employee_id=eid)
+            self.assertEqual(child.raw_supervisor_id, "E1")
+            self.assertEqual(child.prior_supervisor_id, "E2")
+
+    def test_corrections_review_page_renders(self):
+        self.correction(
+            self.company, "E3", StructureCorrection.Kind.REPARENT,
+            {"raw_supervisor_id": "E2"}, {"raw_supervisor_id": "E5"})
+        CorrectionReplayLog.objects.create(
+            company=self.company, snapshot=self.snap, applied_count=1)
+        resp = self.client.get(self.url("corrections_review"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Latest replay report")
+        self.assertContains(resp, "Corrections ledger")
+
+    def test_scenario_action_no_longer_accepts_structural_edits(self):
+        """save_position / eliminate / reassign are deleted, not merely unused.
+
+        save_position ran reassign_manager first and let the outer
+        `except ValueError` swallow a rejected move, so edit_position never ran
+        and the user's attribute edits vanished. That branch no longer exists.
+        """
+        sc = S.create_scenario(company=self.company, base_snapshot=self.snap, name="Reorg")
+        pos = sc.positions.get(employee_id="E3")
+        self.client.post(
+            reverse("org_view:scenario_action",
+                    kwargs={"slug": self.company.slug, "scenario_id": sc.id}),
+            {"action": "save_position", "position_id": pos.id, "job_title": "Hacked"})
+        pos.refresh_from_db()
+        self.assertEqual(pos.job_title, "Technician")

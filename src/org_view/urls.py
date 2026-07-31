@@ -9,6 +9,7 @@ urlpatterns = [
     path("",                          views.index,             name="index"),
     path("c/<slug:slug>/",            views.company_detail,    name="company_detail"),
     path("c/<slug:slug>/trends/",     views.trends,            name="trends"),
+    path("c/<slug:slug>/corrections/", views.corrections_review, name="corrections_review"),
 
     # ── Scenario planning ───────────────────────────────────────────────
     path("c/<slug:slug>/scenarios/",                             views.scenario_list,   name="scenario_list"),
@@ -40,4 +41,13 @@ urlpatterns = [
     path("api/companies/<slug:slug>/snapshots/<int:pk>/set-active/", api.api_set_active, name="api_set_active"),
     path("api/companies/<slug:slug>/snapshots/<int:pk>/edit/",       api.api_edit_snapshot, name="api_edit_snapshot"),
     path("api/companies/<slug:slug>/snapshots/<int:pk>/delete/",     api.api_delete_snapshot, name="api_delete_snapshot"),
+
+    # ── Editing API (changeset, unattached tray, corrections ledger) ────
+    path("api/companies/<slug:slug>/changeset/validate/", api.api_validate_changeset, name="api_validate_changeset"),
+    path("api/companies/<slug:slug>/changeset/commit/",   api.api_commit_changeset,   name="api_commit_changeset"),
+    path("api/companies/<slug:slug>/unattached/",         api.api_unattached,         name="api_unattached"),
+    path("api/companies/<slug:slug>/employees/<str:employee_id>/raw/", api.api_employee_raw, name="api_employee_raw"),
+    path("api/companies/<slug:slug>/corrections/",        api.api_corrections,        name="api_corrections"),
+    path("api/companies/<slug:slug>/corrections/<int:pk>/revert/", api.api_revert_correction, name="api_revert_correction"),
+    path("api/companies/<slug:slug>/corrections/<int:pk>/keep/",   api.api_keep_correction,   name="api_keep_correction"),
 ]

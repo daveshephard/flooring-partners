@@ -38,3 +38,5 @@ Thumbs.db
 *.sql
 *.dump
 backups/
+
+/instructions/

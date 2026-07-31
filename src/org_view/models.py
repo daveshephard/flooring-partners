@@ -62,6 +62,14 @@ class CensusSnapshot(models.Model):
 
 
 class Employee(models.Model):
+    #: Sentinel written into ``employee_status`` by an ``exclude`` correction.
+    #: There is no ``is_excluded`` column because adding one would mean touching
+    #: every query in the app; ``employee_status`` is a free-text CharField with
+    #: no ``choices``, so a reserved value is safe. Rows carrying it stay in the
+    #: table (visible in the corrections ledger and the Excluded tray) but are
+    #: filtered out of every rendering path, so exclusion is reversible.
+    EXCLUDED_STATUS = "__EXCLUDED__"
+
     snapshot         = models.ForeignKey(CensusSnapshot, on_delete=models.CASCADE, related_name="employees")
     employee_id      = models.CharField(max_length=50)
     first_name       = models.CharField(max_length=100)
@@ -197,6 +205,11 @@ class ScenarioPosition(models.Model):
     source_employee_id = models.CharField(max_length=50, blank=True, default="")
     change_type        = models.CharField(max_length=20, choices=ChangeType.choices, default=ChangeType.UNCHANGED)
 
+    #: The supervisor this position had before it was moved, so a reparent or an
+    #: elimination-driven reparent can be reverted. Set by the changeset committer
+    #: and by ``eliminate_position`` before it pulls a child up a level.
+    prior_supervisor_id = models.CharField(max_length=50, blank=True, default="")
+
     first_name         = models.CharField(max_length=100, blank=True)
     last_name          = models.CharField(max_length=100, blank=True)
     raw_supervisor_id  = models.CharField(max_length=50, blank=True, null=True)
@@ -252,3 +265,107 @@ class ScenarioPosition(models.Model):
         """Loaded cost if present, else annual salary, else 0 (as Decimal)."""
         from decimal import Decimal
         return self.fully_loaded_cost or self.annual_salary or Decimal("0")
+
+
+class StructureCorrection(models.Model):
+    """A durable, replayable correction to a company's org structure.
+
+    Keyed by ``employee_id`` rather than by a snapshot FK, because the whole
+    point is to survive census re-uploads. A correction recorded against the
+    March census re-applies to the April census automatically, as long as the
+    person is still in the file.
+
+    Corrections are *materialized* onto Employee rows at commit time (see
+    ``services/corrections.py``); this table is the journal that makes them
+    reversible and replayable. ``before`` holds the value the source file had,
+    so a revert restores the true import value rather than guessing.
+    """
+
+    class Kind(models.TextChoices):
+        REPARENT  = "reparent",  "Change manager"
+        SET_ROOT  = "set_root",  "Make top of org"
+        ATTRIBUTE = "attribute", "Correct attributes"
+        EXCLUDE   = "exclude",   "Exclude from chart"
+
+    class ReplayStatus(models.TextChoices):
+        APPLIED  = "applied",  "Applied"
+        DRIFTED  = "drifted",  "Applied — source value changed"
+        STALE    = "stale",    "Person not in current census"
+        CONFLICT = "conflict", "Could not apply"
+
+    company     = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="corrections")
+    employee_id = models.CharField(max_length=50, db_index=True)
+    kind        = models.CharField(max_length=20, choices=Kind.choices)
+
+    #: What the source census said, captured the first time this was applied.
+    #: Shape depends on kind — {"raw_supervisor_id": "34381"} for reparent,
+    #: {"job_title": "Ops Mgr", "department": "Ops"} for attribute.
+    before      = models.JSONField(default=dict, blank=True)
+    #: What the correction sets. Same shape as ``before``.
+    after       = models.JSONField(default=dict, blank=True)
+
+    note        = models.TextField(blank=True, help_text="Why this correction was made.")
+    is_active   = models.BooleanField(
+        default=True,
+        help_text="Inactive corrections are kept for audit but no longer replayed.",
+    )
+
+    # ── Replay bookkeeping ──────────────────────────────────────────────
+    replay_status       = models.CharField(
+        max_length=20, choices=ReplayStatus.choices, default=ReplayStatus.APPLIED,
+    )
+    replay_detail       = models.CharField(max_length=300, blank=True)
+    first_applied_snapshot = models.ForeignKey(
+        CensusSnapshot, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="corrections_first_applied",
+    )
+    last_applied_snapshot  = models.ForeignKey(
+        CensusSnapshot, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="corrections_last_applied",
+    )
+
+    created_by  = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        # One correction per (person, kind) per company. Re-correcting someone's
+        # manager updates the existing row rather than stacking a second one, so
+        # replay order never matters and the ledger stays readable.
+        unique_together = [("company", "employee_id", "kind")]
+        indexes = [
+            models.Index(fields=["company", "is_active"]),
+            models.Index(fields=["company", "replay_status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.company.name} — {self.employee_id} [{self.get_kind_display()}]"
+
+
+class CorrectionReplayLog(models.Model):
+    """One row per replay run — i.e. per census upload that had corrections to apply.
+
+    Gives the upload flow something concrete to show ("14 applied, 2 drifted,
+    1 stale") and a permanent record of what the tool did to the data.
+    """
+    company   = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="replay_logs")
+    snapshot  = models.ForeignKey(CensusSnapshot, on_delete=models.CASCADE, related_name="replay_logs")
+    run_at    = models.DateTimeField(auto_now_add=True)
+    run_by    = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    applied_count  = models.IntegerField(default=0)
+    drifted_count  = models.IntegerField(default=0)
+    stale_count    = models.IntegerField(default=0)
+    conflict_count = models.IntegerField(default=0)
+    #: Per-correction outcomes: [{"employee_id", "kind", "status", "detail"}, ...]
+    detail    = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ["-run_at"]
+
+    def __str__(self):
+        return f"{self.company.name} replay @ {self.run_at:%Y-%m-%d %H:%M} ({self.applied_count} applied)"

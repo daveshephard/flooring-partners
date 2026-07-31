@@ -47,3 +47,17 @@ jobs:
         DJANGO_DEBUG: "True"
         DJANGO_SECRET_KEY: "ci-only-secret-key"
       run: python manage.py test
+
+    # The browser modules have no build step and no npm dependencies — plain ES
+    # modules run directly under node. metrics.parity.mjs is what keeps the
+    # client-side rollups from drifting away from tree_builder.py.
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Client/server metric parity
+      run: node src/static/org_view/js/__tests__/metrics.parity.mjs
+
+    - name: Drag + changeset logic
+      run: node src/static/org_view/js/__tests__/drag.logic.mjs

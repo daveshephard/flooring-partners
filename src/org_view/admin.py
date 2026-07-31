@@ -1,7 +1,8 @@
 from django.contrib import admin
 
 from .models import (
-    AppPermission, CensusSnapshot, Company, Employee, Scenario, ScenarioPosition,
+    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
+    ScenarioPosition, StructureCorrection,
 )
 
 
@@ -48,3 +49,27 @@ class ScenarioPositionAdmin(admin.ModelAdmin):
     list_display  = ("full_name", "employee_id", "job_title", "change_type", "is_vacant", "scenario")
     list_filter   = ("scenario", "change_type", "is_vacant")
     search_fields = ("first_name", "last_name", "employee_id", "job_title")
+
+
+@admin.register(StructureCorrection)
+class StructureCorrectionAdmin(admin.ModelAdmin):
+    list_display  = ("company", "employee_id", "kind", "replay_status", "is_active", "updated_at")
+    list_filter   = ("company", "kind", "replay_status", "is_active")
+    search_fields = ("employee_id", "note")
+
+
+@admin.register(CorrectionReplayLog)
+class CorrectionReplayLogAdmin(admin.ModelAdmin):
+    """A record of what the tool did to the data — never editable."""
+    list_display    = ("company", "snapshot", "run_at", "applied_count", "drifted_count", "stale_count", "conflict_count")
+    list_filter     = ("company",)
+    readonly_fields = (
+        "company", "snapshot", "run_at", "run_by", "applied_count", "drifted_count",
+        "stale_count", "conflict_count", "detail",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

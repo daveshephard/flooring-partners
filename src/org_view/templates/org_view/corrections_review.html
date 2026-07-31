@@ -1,0 +1,192 @@
+{% extends "org_view/base.html" %}
+{% load static %}
+
+{% block title %}Corrections — {{ company.name }}{% endblock %}
+{% block nav_index %}active{% endblock %}
+
+{% block extra_css %}
+  .cr-pills { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0.6rem 0 1rem; }
+  .cr-pill { border: 1px solid var(--border); border-radius: 0.3rem; padding: 0.5rem 0.9rem; min-width: 130px; }
+  .cr-pill .n { font-family: 'Titillium Web', sans-serif; font-size: 1.4rem; font-weight: 600; display: block; }
+  .cr-pill .l { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .cr-pill.applied .n  { color: var(--success); }
+  .cr-pill.drifted .n  { color: var(--accent-light); }
+  .cr-pill.stale .n    { color: var(--text-muted); }
+  .cr-pill.conflict .n { color: var(--danger); }
+
+  .st { font-size: 0.66rem; padding: 0.12rem 0.45rem; border-radius: 0.2rem; white-space: nowrap;
+        font-family: 'Titillium Web', sans-serif; text-transform: uppercase; letter-spacing: 0.04em; }
+  .st-applied  { background: rgba(106,191,105,0.15); color: var(--success); }
+  .st-drifted  { background: var(--accent-soft); color: var(--accent-light); }
+  .st-stale    { background: rgba(155,157,159,0.15); color: var(--text-muted); }
+  .st-conflict { background: rgba(224,112,112,0.15); color: var(--danger); }
+
+  .cr-change { font-size: 0.8rem; }
+  .cr-change .arrow { color: var(--accent-light); margin: 0 0.3rem; }
+  .cr-was { color: var(--text-muted); }
+  .cr-detail { color: var(--danger); font-size: 0.72rem; display: block; margin-top: 0.15rem; }
+  .cr-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .cr-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; font-size: 0.82rem; }
+  .cr-toolbar label { display: flex; gap: 0.35rem; align-items: center; color: var(--text-muted); }
+  tr.inactive td { opacity: 0.55; }
+{% endblock %}
+
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <h1>Corrections</h1>
+    <p>
+      Structural fixes to the {{ company.name }} census. These are re-applied automatically
+      each time a new census is uploaded, so cleanup only has to be done once.
+    </p>
+  </div>
+  <div>
+    <a href="{% url 'org_view:company_detail' slug=company.slug %}?mode=correct" class="btn btn-secondary btn-sm">&larr; Org chart</a>
+  </div>
+</div>
+
+{% if latest_replay %}
+<div class="section-heading">Latest replay report</div>
+<div class="card">
+  <div style="font-size:0.85rem;">
+    Re-applied to {{ latest_replay.snapshot }} ·
+    {{ latest_replay.run_at|date:"j M Y H:i" }}
+    {% if latest_replay.run_by %}· by {{ latest_replay.run_by.get_username }}{% endif %}
+  </div>
+  <div class="cr-pills">
+    <div class="cr-pill applied"><span class="n">{{ latest_replay.applied_count }}</span><span class="l">applied</span></div>
+    <div class="cr-pill drifted"><span class="n">{{ latest_replay.drifted_count }}</span><span class="l">changed at source</span></div>
+    <div class="cr-pill stale"><span class="n">{{ latest_replay.stale_count }}</span><span class="l">no longer applies</span></div>
+    <div class="cr-pill conflict"><span class="n">{{ latest_replay.conflict_count }}</span><span class="l">need attention</span></div>
+  </div>
+  {% if latest_replay.detail %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Position</th><th>Correction</th><th>Outcome</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for row in latest_replay.detail %}
+        <tr>
+          <td>{{ row.employee_id }}</td>
+          <td>{{ row.kind_label|default:row.kind }}</td>
+          <td><span class="st st-{{ row.status }}">{{ row.status }}</span></td>
+          <td class="cr-was">{{ row.detail|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="section-heading" style="margin-top:1.75rem;">
+  Corrections ledger{% if total_corrections %} ({{ total_corrections }} active){% endif %}
+</div>
+
+<div class="cr-toolbar">
+  <label><input type="checkbox" id="cr-show-inactive"> Show inactive (reverted / stale)</label>
+  <span style="color:var(--text-muted);">Conflicts and drifted rows sort to the top.</span>
+</div>
+
+<div class="card table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th><th>Position</th><th>Correction</th><th>Change</th>
+        <th>Note</th><th>By / When</th>{% if can_edit %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody id="cr-body">
+      <tr><td colspan="7" style="color:var(--text-muted);">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const API = "/org-view/api/companies/{{ company.slug }}";
+  const CSRF = "{{ csrf_token }}";
+  const CAN_EDIT = {{ can_edit|yesno:"true,false" }};
+  const CHART = "{% url 'org_view:company_detail' slug=company.slug %}";
+  const $body = document.getElementById("cr-body");
+  const $inactive = document.getElementById("cr-show-inactive");
+  let rows = [];
+
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s == null ? "" : s;
+    return d.innerHTML;
+  }
+
+  async function load() {
+    const r = await fetch(API + "/corrections/");
+    if (!r.ok) {
+      $body.innerHTML = '<tr><td colspan="7">Could not load corrections.</td></tr>';
+      return;
+    }
+    rows = (await r.json()).corrections || [];
+    render();
+  }
+
+  function render() {
+    const show = rows.filter(c => $inactive.checked || c.is_active);
+    if (!show.length) {
+      $body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted);">'
+        + 'No corrections yet — the census is being taken as imported.</td></tr>';
+      return;
+    }
+    $body.innerHTML = show.map(c => {
+      // Drift resolution is the whole point of this page: without Accept source
+      // and Keep correction, drifted rows accumulate forever.
+      let actions = "";
+      if (CAN_EDIT) {
+        if (c.replay_status === "drifted" && c.is_active) {
+          actions = `<button class="btn btn-secondary btn-xs" data-keep="${c.id}">Keep correction</button>`
+                  + `<button class="btn btn-secondary btn-xs" data-revert="${c.id}">Accept source</button>`;
+        } else if (c.is_active) {
+          actions = `<button class="btn btn-danger btn-xs" data-revert="${c.id}">Revert</button>`;
+        }
+      }
+      return `<tr class="${c.is_active ? "" : "inactive"}">`
+        + `<td><span class="st st-${esc(c.replay_status)}">${esc(c.replay_status_label)}</span></td>`
+        + `<td><a href="${CHART}?mode=correct&focus=${encodeURIComponent(c.employee_id)}">`
+        + `${esc(c.full_name)} (${esc(c.employee_id)})</a></td>`
+        + `<td>${esc(c.kind_label)}</td>`
+        + `<td class="cr-change"><span class="cr-was">${esc(c.before_label)}</span>`
+        + `<span class="arrow">→</span>${esc(c.after_label)}`
+        + (c.replay_detail ? `<span class="cr-detail">${esc(c.replay_detail)}</span>` : "")
+        + `</td>`
+        + `<td class="cr-was">${esc(c.note || "—")}</td>`
+        + `<td class="cr-was">${esc(c.created_by || "—")}<br>${esc(c.updated_at.slice(0, 10))}</td>`
+        + (CAN_EDIT ? `<td><div class="cr-actions">${actions}</div></td>` : "")
+        + `</tr>`;
+    }).join("");
+  }
+
+  async function post(path) {
+    const r = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+      body: "{}",
+    });
+    if (!r.ok) { alert("That action failed."); return; }
+    const data = await r.json();
+    rows = data.corrections || rows;
+    render();
+  }
+
+  $body.addEventListener("click", e => {
+    const rev = e.target.closest("[data-revert]");
+    if (rev) return post(`/corrections/${rev.dataset.revert}/revert/`);
+    const keep = e.target.closest("[data-keep]");
+    if (keep) return post(`/corrections/${keep.dataset.keep}/keep/`);
+  });
+
+  $inactive.addEventListener("change", render);
+  load();
+})();
+</script>
+{% endblock %}

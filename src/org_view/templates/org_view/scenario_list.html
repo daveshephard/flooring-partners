@@ -75,7 +75,7 @@
 {% if scenarios %}
 <div class="sc-list">
   {% for sc in scenarios %}
-  <a class="card sc-item" href="{% url 'org_view:scenario_detail' slug=company.slug scenario_id=sc.id %}">
+  <a class="card sc-item" href="{% url 'org_view:company_detail' slug=company.slug %}?mode=scenario&amp;scenario={{ sc.id }}">
     <div>
       <div class="sc-name">{{ sc.name }}</div>
       <div class="sc-meta">
@@ -83,6 +83,7 @@
         ({{ sc.base_snapshot.effective_date|default:"—" }})
         · updated {{ sc.updated_at|date:"M j, Y" }}
         {% if sc.created_by %}· by {{ sc.created_by.get_username }}{% endif %}
+        · {{ sc.change_count }} change{{ sc.change_count|pluralize }}
       </div>
       {% if sc.description %}<div class="sc-desc">{{ sc.description }}</div>{% endif %}
     </div>

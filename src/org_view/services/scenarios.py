@@ -18,6 +18,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from ..models import CensusSnapshot, Employee, Scenario, ScenarioPosition
+from .costing import cost_of as _cost
 from .tree_builder import _FIELDS as TREE_FIELDS
 from .tree_builder import build_tree_from_rows
 
@@ -38,15 +39,6 @@ EDITABLE_FIELDS = (
 )
 
 
-def _cost(row) -> Decimal:
-    """Loaded cost if present, else annual salary, else 0 — from a dict or model."""
-    if isinstance(row, dict):
-        val = row.get("fully_loaded_cost") or row.get("annual_salary")
-    else:
-        val = row.fully_loaded_cost or row.annual_salary
-    return val if isinstance(val, Decimal) else (Decimal(str(val)) if val else Decimal("0"))
-
-
 # ---------------------------------------------------------------------------
 # Creation
 # ---------------------------------------------------------------------------
@@ -63,7 +55,13 @@ def create_scenario(*, company, base_snapshot: CensusSnapshot, name: str,
         created_by=user,
     )
     positions = []
-    for emp in Employee.objects.filter(snapshot=base_snapshot).values(*_COPY_FIELDS):
+    # Excluded rows must not be cloned: _COPY_FIELDS carries employee_status, so
+    # the sentinel would ride into every new scenario.
+    base_qs = (
+        Employee.objects.filter(snapshot=base_snapshot)
+        .exclude(employee_status=Employee.EXCLUDED_STATUS)
+    )
+    for emp in base_qs.values(*_COPY_FIELDS):
         positions.append(ScenarioPosition(
             scenario=scenario,
             source_employee_id=emp["employee_id"],
@@ -80,10 +78,16 @@ def create_scenario(*, company, base_snapshot: CensusSnapshot, name: str,
 # ---------------------------------------------------------------------------
 
 def active_position_rows(scenario: Scenario) -> list[dict]:
-    """Rows for the tree-builder — everything except eliminated positions."""
+    """Rows for the tree-builder — everything except eliminated / excluded positions.
+
+    An excluded clone would have a cleared ``raw_supervisor_id`` and so become an
+    extra root in every scenario tree, and ``_aggregate``'s ``len(rows)`` would
+    count it in scenario headcount.
+    """
     return list(
         scenario.positions
         .exclude(change_type=ScenarioPosition.ChangeType.REMOVED)
+        .exclude(employee_status=Employee.EXCLUDED_STATUS)
         .values(*TREE_FIELDS)
     )
 
@@ -138,6 +142,8 @@ def reassign_manager(position: ScenarioPosition, new_supervisor_id: str | None):
         raise ValueError("A position cannot report to itself.")
     if new_sup and new_sup in _descendant_ids(position.scenario, position.employee_id):
         raise ValueError("That reassignment would create a reporting loop.")
+    if not position.prior_supervisor_id:
+        position.prior_supervisor_id = position.raw_supervisor_id or ""
     position.raw_supervisor_id = new_sup
     _touch(position, moved_only=True)
     position.save()
@@ -200,9 +206,15 @@ def eliminate_position(position: ScenarioPosition):
         raw_supervisor_id=position.employee_id,
     )
     for child in reports:
+        # Remember where the child hung before the elimination pulled it up, so
+        # un-eliminating is reconstructible. Previously this was simply lost.
+        if not child.prior_supervisor_id:
+            child.prior_supervisor_id = child.raw_supervisor_id or ""
         child.raw_supervisor_id = new_parent
         _touch(child, moved_only=True)
-        child.save(update_fields=["raw_supervisor_id", "change_type", "updated_at"])
+        child.save(update_fields=[
+            "raw_supervisor_id", "prior_supervisor_id", "change_type", "updated_at",
+        ])
 
     if position.change_type == ct.ADDED:
         # A position added then removed in the same scenario just disappears.
@@ -266,7 +278,9 @@ def scenario_summary(scenario: Scenario) -> dict:
 
     if scenario.base_snapshot_id:
         base_rows = list(
-            Employee.objects.filter(snapshot_id=scenario.base_snapshot_id).values(*TREE_FIELDS)
+            Employee.objects.filter(snapshot_id=scenario.base_snapshot_id)
+            .exclude(employee_status=Employee.EXCLUDED_STATUS)
+            .values(*TREE_FIELDS)
         )
     else:
         base_rows = []

@@ -3,6 +3,7 @@ OrgView views — census upload pipeline, org chart, permissions admin, trends.
 """
 import csv as csv_module
 import json
+import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -10,15 +11,22 @@ from accounts.decorators import app_access_required
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 
-from .models import AppPermission, CensusSnapshot, Company, Employee, Scenario, ScenarioPosition
+from .models import (
+    AppPermission, CensusSnapshot, Company, CorrectionReplayLog, Employee, Scenario,
+    ScenarioPosition, StructureCorrection,
+)
 from .parsers import STANDARD_FIELDS, apply_mapping, auto_map_columns, parse_file
+from .services import corrections as corrections_svc
 from .services import scenarios as scenario_svc
 from .validators import validate_rows
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # Session key — single dict holding all upload-pipeline state
 _SK = "ov_upload"
@@ -187,13 +195,48 @@ def company_detail(request, slug):
         override = snapshots.filter(id=sid).first()
         if override:
             snap = override
+
+    can_edit = _can_edit(request.user, company)
+
+    # ?mode=correct / ?mode=scenario&scenario=<id> so a reload or a shared link
+    # lands where the user left off.
+    mode = request.GET.get("mode", "view")
+    if mode not in ("view", "correct", "scenario") or not can_edit:
+        mode = "view"
+    scenario = None
+    if mode == "scenario":
+        scenario = Scenario.objects.filter(
+            id=request.GET.get("scenario"), company=company,
+        ).first()
+        if scenario is None:
+            mode = "view"
+
+    # The corrections ledger deep-links back here with ?focus=<employee_id>.
+    focus_id = (request.GET.get("focus") or "").strip()[:50]
+
+    # Pop the post-upload replay banner, if this is the page we landed on.
+    replay_log = None
+    replay_log_id = request.session.pop("org_view_replay_log_id", None)
+    if replay_log_id:
+        replay_log = CorrectionReplayLog.objects.filter(
+            id=replay_log_id, company=company,
+        ).first()
+
     return render(request, "org_view/company_detail.html", {
         "company": company,
         "snapshot": snap,
         "snapshots": snapshots,
-        "can_edit": _can_edit(request.user, company),
+        # perm is resolved above but was never passed; without it branchRootId
+        # renders null and the client-side branch check never fires.
+        "perm": _perm_for(request.user, company),
+        "scenario": scenario,
+        "mode": mode,
+        "focus_id": focus_id,
+        "replay_log": replay_log,
+        "can_edit": can_edit,
         "can_see_pay": _can_see_pay(request.user, company),
         "scenario_count": Scenario.objects.filter(company=company).count(),
+        "scenarios": Scenario.objects.filter(company=company).only("id", "name", "updated_at"),
         "snapshots_json": json.dumps([
             {
                 "id": s.id,
@@ -203,6 +246,36 @@ def company_detail(request, slug):
             }
             for s in snapshots
         ]),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Corrections review — the audit trail and the drift-resolution workflow
+# ---------------------------------------------------------------------------
+
+@app_access_required("org-view")
+def corrections_review(request, slug):
+    company, denied = _company_access(request, slug)
+    if denied:
+        return denied
+
+    snap = (
+        CensusSnapshot.objects.filter(
+            company=company, status=CensusSnapshot.Status.ACTIVE, is_current=True,
+        ).first()
+        or CensusSnapshot.objects.filter(company=company, status=CensusSnapshot.Status.ACTIVE)
+        .order_by("-effective_date", "-upload_date").first()
+    )
+    latest_replay = CorrectionReplayLog.objects.filter(company=company).first()
+
+    return render(request, "org_view/corrections_review.html", {
+        "company": company,
+        "snapshot": snap,
+        "latest_replay": latest_replay,
+        "can_edit": _can_edit(request.user, company),
+        "total_corrections": StructureCorrection.objects.filter(
+            company=company, is_active=True,
+        ).count(),
     })
 
 
@@ -690,6 +763,27 @@ def save_snapshot(request):
         request,
         f"Snapshot saved: {snapshot.employee_count} employees loaded for {snapshot.company.name}.",
     )
+
+    # Re-apply saved structural corrections to the new census. A bad correction
+    # must never block a census refresh, so failures warn rather than raise.
+    if snapshot.company.corrections.filter(is_active=True).exists():
+        try:
+            log = corrections_svc.replay_corrections(snapshot, user=request.user)
+            request.session["org_view_replay_log_id"] = log.id
+            messages.info(
+                request,
+                f"Re-applied {log.applied_count} saved correction(s) to this census. "
+                f"{log.drifted_count} changed at source, {log.stale_count} no longer apply, "
+                f"{log.conflict_count} need attention.",
+            )
+        except Exception as exc:
+            logger.exception("Correction replay failed for snapshot %s", snapshot.id)
+            messages.warning(
+                request,
+                "The census saved, but saved corrections could not be re-applied "
+                f"automatically ({exc}). Open the Corrections page to re-check them.",
+            )
+
     return redirect("org_view:index")
 
 
@@ -701,18 +795,11 @@ def _perform_save(snapshot, mapped_rows, mapping, warning_count, set_as_active=F
 
     Employee.objects.bulk_create(employees_to_create, ignore_conflicts=True)
 
-    # Resolve supervisor FKs
-    all_employees = list(Employee.objects.filter(snapshot=snapshot))
-    emp_lookup = {e.employee_id: e for e in all_employees}
-    updates = []
-    for emp in all_employees:
-        if emp.raw_supervisor_id and emp.raw_supervisor_id in emp_lookup:
-            emp.supervisor = emp_lookup[emp.raw_supervisor_id]
-            updates.append(emp)
-    if updates:
-        Employee.objects.bulk_update(updates, ["supervisor"], batch_size=500)
+    # Resolve supervisor FKs — one implementation, shared with the corrections layer.
+    corrections_svc.resolve_supervisor_fks(snapshot)
+    all_employees = Employee.objects.filter(snapshot=snapshot)
 
-    snapshot.employee_count = len(all_employees)
+    snapshot.employee_count = all_employees.count()
     snapshot.warnings_count = warning_count
     snapshot.column_mapping = mapping
     snapshot.status = CensusSnapshot.Status.ACTIVE
@@ -840,16 +927,6 @@ def _company_access(request, slug):
     return company, None
 
 
-def _scenario_field_payload(request):
-    """Pull EDITABLE_FIELDS from POST, coercing pay fields to Decimal/None."""
-    out = {}
-    for f in scenario_svc.EDITABLE_FIELDS:
-        if f in request.POST:
-            val = request.POST.get(f, "").strip()
-            out[f] = _decimal(val) if f in ("annual_salary", "fully_loaded_cost") else val
-    return out
-
-
 @app_access_required("org-view")
 def scenario_list(request, slug):
     company, denied = _company_access(request, slug)
@@ -858,6 +935,10 @@ def scenario_list(request, slug):
     scenarios = (
         Scenario.objects.filter(company=company)
         .select_related("base_snapshot", "created_by")
+        .annotate(change_count=Count(
+            "positions",
+            filter=~Q(positions__change_type=ScenarioPosition.ChangeType.UNCHANGED),
+        ))
     )
     snapshots = (
         CensusSnapshot.objects.filter(company=company, status=CensusSnapshot.Status.ACTIVE)
@@ -905,119 +986,74 @@ def scenario_create(request, slug):
         description=request.POST.get("description", "").strip(),
         user=request.user,
     )
+    correction_count = StructureCorrection.objects.filter(
+        company=company, is_active=True,
+    ).count()
     messages.success(
-        request, f"Scenario '{scenario.name}' created from {base.employee_count} positions.")
-    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+        request,
+        f"Scenario '{scenario.name}' created from {base.employee_count} positions"
+        + (f" ({correction_count} correction(s) applied to the baseline)."
+           if correction_count else "."),
+    )
+    return redirect(_scenario_chart_url(slug, scenario.id))
+
+
+def _scenario_chart_url(slug, scenario_id):
+    return (
+        f"{reverse('org_view:company_detail', kwargs={'slug': slug})}"
+        f"?mode=scenario&scenario={scenario_id}"
+    )
 
 
 @app_access_required("org-view")
 def scenario_detail(request, slug, scenario_id):
+    """The chart, in scenario mode.
+
+    Kept as its own URL so existing links and bookmarks still resolve. The old
+    265-line form list is gone: it re-rendered every position on every edit
+    (640,800 ``<option>`` tags at 800 headcount), had no search, no chart, and no
+    undo — and it ignored ``perm.branch_root_employee_id`` entirely while
+    ``api_scenario_tree`` honoured it. The chart sources its tree from that API,
+    so the branch-scoping gap closes by construction.
+    """
     company, denied = _company_access(request, slug)
     if denied:
         return denied
     scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
-
-    ct = ScenarioPosition.ChangeType
-    positions = list(scenario.positions.exclude(change_type=ct.REMOVED))
-    positions.sort(key=lambda p: (p.last_name or "", p.first_name or "", p.job_title or ""))
-    managers = [
-        {"id": p.employee_id, "label": (f"{p.full_name} — {p.job_title}").strip(" —")}
-        for p in positions
-    ]
-
-    # Flatten the scenario tree into indented rows for a read-only structure view.
-    pos_by_id = {p.employee_id: p for p in positions}
-    tree = scenario_svc.build_scenario_tree(scenario)
-    tree_rows = []
-
-    def _flatten(node, depth):
-        p = pos_by_id.get(node["employee_id"])
-        tree_rows.append({
-            "depth": depth,
-            "full_name": node["full_name"],
-            "job_title": node.get("job_title", ""),
-            "headcount": node.get("metrics", {}).get("headcount"),
-            "change_type": p.change_type if p else ct.UNCHANGED,
-            "is_vacant": p.is_vacant if p else False,
-        })
-        for ch in node.get("children", []):
-            _flatten(ch, depth + 1)
-
-    roots = tree if isinstance(tree, list) else ([tree] if tree else [])
-    for r in roots:
-        _flatten(r, 0)
-
-    return render(request, "org_view/scenario_detail.html", {
-        "company": company,
-        "scenario": scenario,
-        "summary": scenario_svc.scenario_summary(scenario),
-        "positions": positions,
-        "managers": managers,
-        "tree_rows": tree_rows,
-        "can_edit": _can_edit(request.user, company),
-        "can_see_pay": _can_see_pay(request.user, company),
-    })
+    return redirect(_scenario_chart_url(slug, scenario.id))
 
 
 @app_access_required("org-view")
 def scenario_action(request, slug, scenario_id):
+    """Scenario metadata only — every structural edit goes through the changeset API.
+
+    The ``save_position``, ``eliminate`` and ``reassign`` branches are deleted.
+    ``save_position`` in particular ran ``reassign_manager`` first and let the
+    outer ``except ValueError`` swallow a rejected move, so ``edit_position``
+    never ran and the user's title/department/salary edits vanished silently.
+    That whole class of bug is now impossible: the changeset endpoint validates
+    the batch before writing anything and commits atomically.
+    """
     company, denied = _company_access(request, slug)
     if denied:
         return denied
     scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
+    back = _scenario_chart_url(slug, scenario.id)
     if not _can_edit(request.user, company):
         messages.error(request, "You need admin access to edit a scenario.")
-        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+        return redirect(back)
     if request.method != "POST":
-        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+        return redirect(back)
 
-    action = request.POST.get("action", "")
-    ct = ScenarioPosition.ChangeType
+    if request.POST.get("action", "") == "rename":
+        scenario.name = request.POST.get("name", scenario.name).strip() or scenario.name
+        scenario.description = request.POST.get("description", scenario.description).strip()
+        scenario.save(update_fields=["name", "description", "updated_at"])
+        messages.success(request, "Scenario details updated.")
+    else:
+        messages.error(request, "Unknown action.")
 
-    try:
-        if action == "rename":
-            scenario.name = request.POST.get("name", scenario.name).strip() or scenario.name
-            scenario.description = request.POST.get("description", scenario.description).strip()
-            scenario.save(update_fields=["name", "description", "updated_at"])
-            messages.success(request, "Scenario details updated.")
-
-        elif action == "add_position":
-            pos = scenario_svc.add_position(
-                scenario,
-                supervisor_id=request.POST.get("raw_supervisor_id") or None,
-                is_vacant=request.POST.get("is_vacant") == "on",
-                note=request.POST.get("note", "").strip(),
-                **_scenario_field_payload(request),
-            )
-            messages.success(request, f"Added position: {pos.full_name}.")
-
-        elif action in ("save_position", "eliminate", "reassign"):
-            pos = get_object_or_404(
-                ScenarioPosition, id=request.POST.get("position_id"), scenario=scenario)
-            if action == "eliminate":
-                name = pos.full_name
-                scenario_svc.eliminate_position(pos)
-                messages.success(request, f"Eliminated {name}.")
-            elif action == "reassign":
-                scenario_svc.reassign_manager(pos, request.POST.get("raw_supervisor_id") or None)
-                messages.success(request, "Manager reassigned.")
-            else:  # save_position — attributes (+ optional manager change)
-                new_sup = request.POST.get("raw_supervisor_id")
-                if new_sup is not None and (new_sup or None) != (pos.raw_supervisor_id or None):
-                    scenario_svc.reassign_manager(pos, new_sup or None)
-                    pos.refresh_from_db()
-                changes = _scenario_field_payload(request)
-                changes["is_vacant"] = request.POST.get("is_vacant") == "on"
-                changes["note"] = request.POST.get("note", "").strip()
-                scenario_svc.edit_position(pos, changes)
-                messages.success(request, f"Updated {pos.full_name}.")
-        else:
-            messages.error(request, "Unknown action.")
-    except ValueError as exc:
-        messages.error(request, str(exc))
-
-    scenario.save(update_fields=["updated_at"])
-    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+    return redirect(back)
 
 
 @app_access_required("org-view")
@@ -1028,10 +1064,10 @@ def scenario_delete(request, slug, scenario_id):
     scenario = get_object_or_404(Scenario, id=scenario_id, company=company)
     if not _can_edit(request.user, company):
         messages.error(request, "You need admin access to delete a scenario.")
-        return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+        return redirect(_scenario_chart_url(slug, scenario.id))
     if request.method == "POST":
         name = scenario.name
         scenario.delete()
         messages.success(request, f"Scenario '{name}' deleted.")
         return redirect("org_view:scenario_list", slug=slug)
-    return redirect("org_view:scenario_detail", slug=slug, scenario_id=scenario.id)
+    return redirect(_scenario_chart_url(slug, scenario.id))

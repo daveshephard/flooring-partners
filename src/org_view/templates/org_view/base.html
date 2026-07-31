@@ -308,6 +308,8 @@
 
     {% block extra_css %}{% endblock %}
   </style>
+  {# For pages whose CSS lives in a static file rather than inline. #}
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
   <nav class="topbar">
