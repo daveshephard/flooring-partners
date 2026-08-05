@@ -176,11 +176,27 @@ export const changeset = {
     }
   },
 
-  /** Ops as the server wants them — client-only keys stripped. */
+  /** Ops as the server wants them — client-only keys stripped, dependency-ordered. */
   payload() {
-    return this.ops.map(({ op, employee_id, after, note }) => ({
-      op, employee_id, after: after || {}, note: note || "",
-    }));
+    return this.commitPayload().ops;
+  },
+
+  /**
+   * The wire payload plus a map back to staging positions.
+   *
+   * The server validates ops in the order it receives them and reports errors by
+   * *payload* index, while the review modal removes ops by *staging* index. Those
+   * were the same list until commit ordering was introduced, so anything that
+   * consumes server error indices must translate through `stagingIndex`.
+   */
+  commitPayload() {
+    const ordered = orderForCommit(this.ops);
+    return {
+      ops: ordered.map(({ op, employee_id, after, note }) => ({
+        op, employee_id, after: after || {}, note: note || "",
+      })),
+      stagingIndex: ordered.map(o => this.ops.indexOf(o)),
+    };
   },
 
   /** Grouped for the review modal. */
@@ -258,6 +274,69 @@ export const changeset = {
 
 function norm(v) {
   return v === null || v === undefined ? "" : String(v).trim();
+}
+
+/**
+ * Ops re-ordered so an `add` always precedes anything that references the id it
+ * introduces.
+ *
+ * The server walks the batch in order and rejects a manager it hasn't seen yet,
+ * so the wire order has to respect that dependency. Staging order doesn't:
+ * `add()` **replaces an existing op in place**, keeping its original index. Move
+ * someone, then create a role, then drop them onto the new role, and the
+ * replaced reparent stays at index 0 while the add sits at index 1 — the server
+ * sees `reports to TMP-1` before TMP-1 exists and fails the whole batch with
+ * "Manager TMP-1 is not in this census." From the chart everything looked right,
+ * which is what made it read as "I can't assign reports to a role I created".
+ *
+ * Stable: a repeated pass emits, in original order, every op whose staged
+ * dependencies are already out. Ops with no staged references keep their
+ * relative order, so the review list and the ledger are unchanged in the common
+ * case where nothing was added at all.
+ */
+export function orderForCommit(ops) {
+  const introduced = new Set();
+  for (const op of ops) if (op.op === "add") introduced.add(op.employee_id);
+  if (!introduced.size) return ops.slice();
+
+  /** The staged ids this op can't be applied without. */
+  function dependsOn(op) {
+    const ids = [];
+    // An op *about* a staged add (say eliminating it) needs the add first; an
+    // `add` obviously doesn't depend on itself.
+    if (op.op !== "add") ids.push(op.employee_id);
+    const sup = (op.after || {}).raw_supervisor_id;
+    if (sup) ids.push(sup);
+    for (const dest of Object.values((op.after || {}).reassign || {})) {
+      if (dest) ids.push(dest);
+    }
+    return ids.filter(id => introduced.has(id) && id !== op.employee_id);
+  }
+
+  const out = [];
+  const emitted = new Set();
+  let pending = ops.slice();
+  let progress = true;
+
+  while (pending.length && progress) {
+    progress = false;
+    const held = [];
+    for (const op of pending) {
+      if (dependsOn(op).every(id => emitted.has(id))) {
+        out.push(op);
+        if (op.op === "add") emitted.add(op.employee_id);
+        progress = true;
+      } else {
+        held.push(op);
+      }
+    }
+    pending = held;
+  }
+
+  // A dependency cycle among staged adds isn't reachable through the UI, but
+  // dropping ops silently would be far worse than letting the server rule on
+  // them — so anything left over still goes.
+  return out.concat(pending);
 }
 
 export function storageKeyFor(cfg) {

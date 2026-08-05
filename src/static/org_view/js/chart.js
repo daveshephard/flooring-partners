@@ -1031,6 +1031,29 @@ function doSearch(q) {
   $searchRes.classList.add("open");
 }
 
+/**
+ * Show a person where they now sit, without moving the camera.
+ *
+ * navigateToEmployee() re-roots the chart onto the person's manager, which is
+ * right when you've searched for someone and wrong after an edit: dropping a
+ * card onto a manager in another branch would throw you into that branch, so
+ * the org you were working on vanished and the move read as "nothing happened".
+ *
+ * This expands whatever is needed to make the person visible, redraws, and
+ * flashes them — keeping the current root, pan and zoom exactly as they were.
+ */
+export function revealInPlace(eid) {
+  if (!viewRoot) return;
+  for (const step of buildPathTo(viewRoot, eid)) expandedSet.add(step.employee_id);
+  renderTree();
+  requestAnimationFrame(() => {
+    const card = $tree.querySelector('.oc-card[data-eid="' + CSS.escape(eid) + '"]');
+    if (!card) return;
+    card.style.boxShadow = "0 0 0 3px var(--accent), 0 0 16px rgba(164,146,117,0.4)";
+    setTimeout(() => { card.style.boxShadow = ""; }, 1800);
+  });
+}
+
 export function navigateToEmployee(eid) {
   const path = buildPathTo(fullTree, eid);
   if (path.length === 0) return;

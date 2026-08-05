@@ -513,6 +513,18 @@ button.oc-tile:hover { border-color: var(--accent); }
 .oc-diff-table td { padding: 0.45rem 0.5rem; vertical-align: top; }
 .oc-diff-table tr.invalid td { background: rgba(224,112,112,0.08); }
 .oc-diff-error { color: var(--danger); font-size: 0.72rem; display: block; margin-top: 0.2rem; }
+/* A rejected save re-annotates the review list in place, so it has to say so at
+   the top — otherwise the list is indistinguishable from the one you were just
+   looking at, and pressing Save reads as having done nothing. */
+.oc-review-rejected {
+  background: rgba(224,112,112,0.12);
+  border: 1px solid var(--danger);
+  border-radius: 0.25rem;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  margin-bottom: 0.7rem;
+  padding: 0.5rem 0.6rem;
+}
 .oc-diff-note {
   width: 100%;
   background: rgba(26,30,34,0.7);

@@ -94,4 +94,50 @@ assert.ok(src.some(l => /^function initPanel\(/.test(l)),
 assert.ok(src.some(l => l.includes("initPanel();")),
   "boot() must call initPanel() so the delegated handlers exist");
 
+/* ── The same symptom, reached a second way ───────────────────────────
+   Stacking was fixed for $panel's listeners, but nothing stopped two *modals*
+   from coexisting in the host. The rail docks beside the chart rather than
+   covering it, so the save bar stays clickable while Review is open: press it and
+   a second review list lands behind the first, and dismissing the top one reveals
+   the other. Reported, again, as the change log appearing twice. */
+const openModalStart = src.findIndex(l => /^function openModal\(/.test(l));
+assert.ok(openModalStart > -1, "openModal() should still exist");
+const openModalEnd = src.findIndex((l, i) => i > openModalStart && /^\}/.test(l));
+const openModalBody = src.slice(openModalStart, openModalEnd).join("\n");
+assert.match(openModalBody, /if \(liveModal\) liveModal\.close\(/,
+  "openModal() must dismiss the modal that is already up, or two can stack");
+assert.match(openModalBody, /liveModal = \{ root, close \}/,
+  "openModal() must register itself as the live modal");
+assert.ok(
+  src.some(l => /liveModal\.root === root/.test(l)),
+  "close() must clear liveModal, or the next open dismisses an element that's gone");
+
+/* A rejected save has to annotate the list that is already open. Closing it and
+   opening an identically-titled replacement is what read as "nothing happened,
+   and the log came back". */
+assert.ok(
+  src.some(l => l.includes('value: "save", keepOpen: true')),
+  "the review modal's Save must keep the list open so errors can be shown in place");
+assert.ok(
+  src.some(l => l.includes("if (reviewCtx) reviewCtx.showErrors(errs)")),
+  "a 422 must re-annotate the open review list rather than opening another");
+assert.ok(
+  src.some(l => l.includes("if (reviewCtx) reviewCtx.close()")),
+  "a successful save must close the review list it was launched from");
+
+/* Server errors are indexed by commit order, the review list by staging order.
+   They stopped being the same list once adds were hoisted ahead of their
+   dependents, so every consumer of a server index has to translate. */
+for (const marker of ["/changeset/commit/", "/changeset/validate/"]) {
+  const at = src.findIndex(l => l.includes(marker));
+  assert.ok(at > -1, `${marker} should still be posted`);
+  const window = src.slice(Math.max(0, at - 12), at + 12).join("\n");
+  assert.ok(window.includes("commitPayload()"),
+    `${marker} must send the dependency-ordered payload, not raw staging order`);
+}
+assert.ok(
+  src.filter(l => /toStagingErrors\(/.test(l)).length >= 3,
+  "both the validate and commit paths must translate error indices, and the "
+  + "helper must exist");
+
 console.log(`shell static checks OK — scanned ${src.length} lines, no stacking listeners`);

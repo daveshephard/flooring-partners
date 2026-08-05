@@ -844,6 +844,81 @@ class ChangesetTests(OrgFixtureMixin, TestCase):
             Employee.objects.get(snapshot=self.snap, employee_id="E2").raw_supervisor_id,
             "51234", "the reparent must resolve the temp id to the assigned badge")
 
+    def test_add_that_the_census_already_covers_remaps_its_reports(self):
+        """An add can stand down — and its reports still have to land somewhere.
+
+        `_apply_add_person` retires the correction when the census already has this
+        person under a different badge number: ours would duplicate them. Nothing
+        is created at the id we asked for, so anyone the user put under the new
+        role must be pointed at the row that does exist. Writing the unused id
+        would file them under a supervisor `_fetch_employees` never returns, i.e.
+        silently off the chart, on a save that reported success.
+        """
+        resp = self.commit([
+            {"op": "add", "employee_id": "TMP-1",
+             "after": {"employee_id": "51234", "first_name": "Cy", "last_name": "One",
+                       "job_title": "Technician", "raw_supervisor_id": "E1"}},
+            {"op": "reparent", "employee_id": "E4", "after": {"raw_supervisor_id": "TMP-1"}},
+        ])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["id_map"], {"TMP-1": "E3"},
+                         "the temp id must resolve to the row that actually exists")
+        self.assertEqual(
+            Employee.objects.get(snapshot=self.snap, employee_id="E4").raw_supervisor_id,
+            "E3")
+        self.assertFalse(
+            Employee.objects.filter(snapshot=self.snap, employee_id="51234").exists())
+        self.assertIn("E4", _flatten_ids(build_tree(self.snap.id)),
+                      "the reassigned report must still be drawn")
+
+    def test_add_with_nowhere_to_land_fails_the_batch_instead_of_orphaning(self):
+        """When an add materializes nothing at all, dependents can't be written.
+
+        Here the only name match is a row that was excluded from the chart, so
+        `_apply_add_person` stands down and there is no live row to point at. The
+        batch is refused whole rather than stranding E4 under an id that names
+        nobody.
+        """
+        self.assertEqual(
+            self.commit([{"op": "exclude", "employee_id": "E3", "after": {}}]).status_code,
+            200)
+        before = dict(Employee.objects.filter(snapshot=self.snap)
+                      .values_list("employee_id", "raw_supervisor_id"))
+
+        resp = self.commit([
+            {"op": "add", "employee_id": "TMP-1",
+             "after": {"employee_id": "51234", "first_name": "Cy", "last_name": "One",
+                       "job_title": "Technician", "raw_supervisor_id": "E1"}},
+            {"op": "reparent", "employee_id": "E4", "after": {"raw_supervisor_id": "TMP-1"}},
+        ])
+        self.assertEqual(resp.status_code, 422, resp.content)
+        error = resp.json()["errors"][0]["error"]
+        self.assertIn("would duplicate them", error, "say why it stood down")
+        self.assertIn("nowhere to go", error, "and what that means for the batch")
+        self.assertEqual(
+            before,
+            dict(Employee.objects.filter(snapshot=self.snap)
+                 .values_list("employee_id", "raw_supervisor_id")),
+            "a refused batch must write nothing")
+
+    def test_an_add_nothing_depends_on_still_commits(self):
+        """The guard fires only when something would be left dangling."""
+        self.assertEqual(
+            self.commit([{"op": "exclude", "employee_id": "E3", "after": {}}]).status_code,
+            200)
+        resp = self.commit([{
+            "op": "add", "employee_id": "TMP-1",
+            "after": {"employee_id": "51234", "first_name": "Cy", "last_name": "One",
+                      "job_title": "Technician", "raw_supervisor_id": "E1"},
+        }])
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["id_map"], {},
+                         "nothing landed, so there is no id to map")
+        correction = StructureCorrection.objects.get(
+            employee_id="51234", kind=StructureCorrection.Kind.ADD_PERSON)
+        self.assertEqual(correction.replay_status,
+                         StructureCorrection.ReplayStatus.RESOLVED)
+
     def test_correct_mode_rejects_pay_fields(self):
         resp = self.commit([
             {"op": "attribute", "employee_id": "E3", "after": {"annual_salary": "1"}}])

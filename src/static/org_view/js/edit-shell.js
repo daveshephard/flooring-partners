@@ -1356,6 +1356,7 @@ function openRemovalForm(eid, node, kind) {
       const subtree = invalidTargetsFor(chart.fullTree, eid);
       attachTypeahead(root, "rm-ta-all", {
         exclude: subtree,
+        local: true,
         onPick(target) {
           reports.forEach((child, idx) => {
             if (child.employee_id === target) return;
@@ -1370,6 +1371,7 @@ function openRemovalForm(eid, node, kind) {
         bad.add(eid);
         attachTypeahead(root, "rm-ta-" + idx, {
           exclude: bad,
+          local: true,
           onPick(target) { dest.set(child.employee_id, target); },
         });
         const input = root.querySelector("#rm-ta-" + idx);
@@ -1459,6 +1461,7 @@ function openAddForm(supervisorId) {
     onMount(root) {
       attachTypeahead(root, "add-ta", {
         exclude: new Set(),
+        local: true,
         onPick(target) {
           chosenSupervisor = target;
           root.querySelector("#add-root").checked = false;
@@ -1510,7 +1513,7 @@ function openAddForm(supervisorId) {
       });
       if (chosenSupervisor) chart.expandNode(chosenSupervisor);
       rerender();
-      chart.navigateToEmployee(tmp);
+      chart.revealInPlace(tmp);
       toast(correcting ? "Person staged — press Save to add them."
                        : "Position staged — press Save to add it.");
     },
@@ -1528,30 +1531,82 @@ function typeaheadMarkup(id, placeholder, value) {
 }
 
 /**
+ * Everyone the *client* knows about, shaped like an api_employee_search row.
+ *
+ * api_employee_search queries Employee rows, so it cannot see a person or role
+ * that is still only staged — which meant a role you had just created was
+ * unpickable as a manager in every typeahead on the page. You could drop a card
+ * onto it, but the side panel's "Reports to" search, the add form's manager
+ * picker and the reallocation pickers all came back "No valid matches", so from
+ * the outside the new role simply refused to take reports.
+ *
+ * The optimistic tree already holds the staged additions, so it is the right
+ * source; `staged` marks the ones payroll has never heard of.
+ */
+function localMatches(query, exclude) {
+  const q = query.toLowerCase();
+  const out = [];
+  for (const n of chart.flattenTree(chart.fullTree)) {
+    if (!n || !n.employee_id || exclude.has(n.employee_id)) continue;
+    const haystack = [n.full_name, n.job_title, n.employee_id].join(" ").toLowerCase();
+    if (!haystack.includes(q)) continue;
+    out.push({
+      employee_id: n.employee_id,
+      full_name: n.full_name || n.employee_id,
+      job_title: n.job_title || "",
+      management_level: n.management_level || "",
+      staged: !!n._pendingAdd,
+    });
+  }
+  // Staged first: a role you created seconds ago is the one you're looking for.
+  out.sort((a, b) => (b.staged ? 1 : 0) - (a.staged ? 1 : 0));
+  return out;
+}
+
+function typeaheadRow(x) {
+  // The pick handler reads the first inner <div> as the label, so full_name has
+  // to stay first and alone in it.
+  return `<div class="oc-typeahead-item" data-pick="${esc(x.employee_id)}">`
+       + `<div>${esc(x.full_name)}</div>`
+       + `<div class="ta-title">${esc(x.job_title || "")} · ${esc(x.employee_id)}`
+       + (x.staged ? ` · <em>unsaved</em>` : "") + `</div></div>`;
+}
+
+/**
  * @param root      element containing the input
  * @param exclude   Set of employee_ids that can't be picked (self + descendants)
  * @param onPick    (employee_id, row) => void
+ * @param local     include staged, not-yet-saved people. On for manager pickers;
+ *                  off for the group form, whose endpoint validates member ids
+ *                  against the census and would reject a staged id.
  */
-function attachTypeahead(root, id, { exclude, onPick }) {
+function attachTypeahead(root, id, { exclude, onPick, local = false }) {
   const input = root.querySelector("#" + id);
   const res = root.querySelector("#" + id + "-res");
   if (!input) return;
   let timer = null;
   const bad = exclude || new Set();
 
+  function draw(rows) {
+    res.innerHTML = rows.length
+      ? rows.slice(0, 10).map(typeaheadRow).join("")
+      : `<div class="oc-typeahead-item" style="color:var(--text-muted);">No valid matches</div>`;
+    res.classList.add("open");
+  }
+
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const q = input.value.trim();
     if (q.length < 2) { res.classList.remove("open"); return; }
+    // Local hits render immediately; the server's arrive when they arrive.
+    const mine = local ? localMatches(q, bad) : [];
+    if (mine.length) draw(mine);
     timer = setTimeout(async () => {
       const r = await api("/employees/search/?q=" + encodeURIComponent(q) + "&limit=10");
-      const rows = (r.data || []).filter(x => !bad.has(x.employee_id));
-      res.innerHTML = rows.length
-        ? rows.map(x => `<div class="oc-typeahead-item" data-pick="${esc(x.employee_id)}">`
-            + `<div>${esc(x.full_name)}</div>`
-            + `<div class="ta-title">${esc(x.job_title || "")} · ${esc(x.employee_id)}</div></div>`).join("")
-        : `<div class="oc-typeahead-item" style="color:var(--text-muted);">No valid matches</div>`;
-      res.classList.add("open");
+      const seen = new Set(mine.map(x => x.employee_id));
+      const rows = mine.concat(
+        (r.data || []).filter(x => !bad.has(x.employee_id) && !seen.has(x.employee_id)));
+      draw(rows);
     }, 200);
   });
 
@@ -1575,12 +1630,13 @@ function wireTypeahead(eid, node) {
     // Exclude the subject and its descendants, so an invalid move simply can't
     // be selected in the first place.
     exclude: invalidTargetsFor(chart.fullTree, eid),
+    local: true,
     onPick(target) {
       stage(reparentOp(eid, target, node, noteValue()));
       closePanel();
       chart.expandNode(target);
       rerender();
-      chart.navigateToEmployee(eid);
+      chart.revealInPlace(eid);
     },
   });
 }
@@ -1640,12 +1696,13 @@ async function save() {
   const original = $btnSave.textContent;
   $btnSave.textContent = "Saving…";
   try {
+    const { ops, stagingIndex } = changeset.commitPayload();
     const r = await api("/changeset/commit/", {
       body: JSON.stringify({
         target: changeset.target,
         scenario_id: scenarioId,
         expected_snapshot_id: CFG.snapshotId,
-        ops: changeset.payload(),
+        ops,
       }),
     });
 
@@ -1654,6 +1711,7 @@ async function save() {
       changeset.replaceIds(r.data.id_map);
       changeset.clear();
       changeset.discardStored();
+      if (reviewCtx) reviewCtx.close();
       chart.setTree(r.data.tree);
       captureBaseRows(r.data.tree);
       if (mode === "scenario") scenarioSummary = r.data.summary;
@@ -1663,9 +1721,14 @@ async function save() {
       return true;
     }
     if (r.status === 422) {
-      // Never discard the user's work on a validation failure.
-      openReview(r.data.errors || []);
-      toast("Some changes were rejected — see the review list.", "err");
+      // Never discard the user's work on a validation failure. Annotate the list
+      // that's already open rather than replacing it with an identical one.
+      const errs = toStagingErrors(r.data.errors || [], stagingIndex);
+      if (reviewCtx) reviewCtx.showErrors(errs);
+      else openReview(errs);
+      const n = errs.length;
+      toast(`${n} change${n === 1 ? "" : "s"} rejected — nothing was saved. `
+            + `See the review list.`, "err");
       return false;
     }
     if (r.status === 409) {
@@ -1771,23 +1834,54 @@ function nameOf(eid) {
   return n ? `${n.full_name} (${eid})` : eid;
 }
 
+/* The review list while it is up.
+ *
+ * A rejected save used to close this modal and open a brand-new one carrying the
+ * error annotations. Same title, same rows, so pressing "Save changes" looked
+ * like it had simply redrawn the change log a second time and done nothing —
+ * which is how it was reported. The list now stays put and annotates itself. */
+let reviewCtx = null;
+
+/**
+ * Server errors are indexed by *commit* order; this list works in *staging*
+ * order. Translate before an error is shown against a row, or the red flag lands
+ * on the wrong change.
+ */
+function toStagingErrors(errors, stagingIndex) {
+  return (errors || []).map(e => ({
+    ...e,
+    index: stagingIndex && stagingIndex[e.index] != null ? stagingIndex[e.index] : e.index,
+  }));
+}
+
 async function openReview(presetErrors) {
   let errors = presetErrors;
   if (!errors) {
     // Surface problems before the user commits, not after.
+    const { ops, stagingIndex } = changeset.commitPayload();
     const r = await api("/changeset/validate/", {
       body: JSON.stringify({
-        target: changeset.target, scenario_id: scenarioId, ops: changeset.payload(),
+        target: changeset.target, scenario_id: scenarioId, ops,
       }),
     });
-    errors = (r.data && r.data.errors) || [];
+    errors = toStagingErrors((r.data && r.data.errors) || [], stagingIndex);
   }
-  const byIndex = new Map(errors.map(e => [e.index, e.error]));
+  let byIndex = new Map(errors.map(e => [e.index, e.error]));
+  let rootEl = null;
+  let closeMe = null;
 
   function body() {
     const groups = changeset.grouped();
     if (!groups.length) return '<p style="color:var(--text-muted);">Nothing staged.</p>';
-    let html = '<table class="oc-diff-table"><thead><tr>'
+    let html = "";
+    if (byIndex.size) {
+      // Say plainly that nothing was written. Without this the annotated list is
+      // indistinguishable from the one you were just looking at.
+      html += `<p class="oc-review-rejected">${byIndex.size} change`
+            + `${byIndex.size === 1 ? " was" : "s were"} rejected, so <strong>nothing `
+            + `was saved</strong>. Fix or remove the flagged rows, then save again.</p>`;
+    }
+    html += '<table class="oc-diff-table"><thead><tr>'
       + '<th>Change</th><th>Position</th><th>Detail</th><th>Note</th><th></th>'
       + '</tr></thead><tbody>';
     for (const g of groups) {
@@ -1818,15 +1912,28 @@ async function openReview(presetErrors) {
     return html;
   }
 
+  function redraw() {
+    if (!rootEl) return;
+    const b = rootEl.querySelector(".oc-modal-body");
+    if (b) b.innerHTML = body();
+    const head = rootEl.querySelector(".oc-modal-head h2");
+    if (head) head.textContent = reviewTitle();
+  }
+
   openModal({
     wide: true,
-    title: `Review ${changeset.count()} staged change${changeset.count() === 1 ? "" : "s"}`,
+    title: reviewTitle(),
     body: body(),
     buttons: [
       { label: "Close", cls: "btn-secondary", value: null },
-      { label: "Save changes", cls: "btn-primary", value: "save" },
+      // keepOpen: the list has to survive a rejected save so the errors can be
+      // shown against the rows the user is already reading. save() closes it on
+      // success.
+      { label: "Save changes", cls: "btn-primary", value: "save", keepOpen: true },
     ],
-    onMount(root) {
+    onMount(root, close) {
+      rootEl = root;
+      closeMe = close;
       root.addEventListener("click", e => {
         const rm = e.target.closest("[data-remove-index]");
         if (!rm) return;
@@ -1834,7 +1941,7 @@ async function openReview(presetErrors) {
         rerender();
         // Indices shift, so the flagged rows are no longer trustworthy.
         byIndex.clear();
-        root.querySelector(".oc-modal-body").innerHTML = body();
+        redraw();
       });
       root.addEventListener("change", e => {
         const note = e.target.closest("[data-note-index]");
@@ -1843,15 +1950,45 @@ async function openReview(presetErrors) {
         if (op) { op.note = note.value; changeset.persist(); }
       });
     },
-    onClose(v) { if (v === "save") save(); },
+    onClose() { reviewCtx = null; },
+    onButton(v) { if (v === "save") save(); },
   });
+
+  reviewCtx = {
+    /** Annotate the list in place after a rejected save. */
+    showErrors(errs) {
+      byIndex = new Map(errs.map(e => [e.index, e.error]));
+      redraw();
+    },
+    close() { if (closeMe) closeMe(null); },
+  };
+}
+
+function reviewTitle() {
+  const n = changeset.count();
+  return `Review ${n} staged change${n === 1 ? "" : "s"}`;
 }
 
 /* ══════════════════════════════════════════════════════════════════
    Modals
    ══════════════════════════════════════════════════════════════════ */
 
+/* The one modal that is currently up, so a second can't stack behind it.
+ *
+ * The rail docks *beside* the chart rather than covering it (aria-modal="false"),
+ * which is deliberate — you can still read the chart you're editing — but it
+ * leaves the toolbar and the save bar clickable while a modal is open. Opening
+ * Review and then pressing the save bar's Save put two review lists in the host,
+ * one behind the other, and dismissing the top one revealed the second: the
+ * change log "appearing a second time". */
+let liveModal = null;
+
 function openModal({ title, body, buttons, wide, onMount, onClose, onButton }) {
+  // Close through the existing modal's own teardown, not by removing the
+  // element: confirmModal() and pickScenario() are awaited, and a promise that
+  // never resolves would wedge switchMode() forever.
+  if (liveModal) liveModal.close(null);
+
   const root = document.createElement("div");
   root.className = "oc-modal-backdrop" + (wide ? " wide" : "");
   root.innerHTML =
@@ -1866,6 +2003,7 @@ function openModal({ title, body, buttons, wide, onMount, onClose, onButton }) {
   syncRail();
 
   function close(value) {
+    if (liveModal && liveModal.root === root) liveModal = null;
     root.remove();
     document.removeEventListener("keydown", onKey, true);
     syncRail();
@@ -1885,12 +2023,13 @@ function openModal({ title, body, buttons, wide, onMount, onClose, onButton }) {
     }
   });
   document.addEventListener("keydown", onKey, true);
+  liveModal = { root, close };
   // onMount gets `close` so a handler can dismiss the modal through its own
   // teardown — removing the element directly would leak the keydown listener.
   if (onMount) onMount(root, close);
   const first = root.querySelector("input, select, textarea, button");
   if (first) first.focus();
-  return { close };
+  return { root, close };
 }
 
 function trapFocus(e, root) {
@@ -1997,10 +2136,15 @@ function installDrag() {
         after: { raw_supervisor_id: targetId },
         _before: { raw_supervisor_id: node ? node.raw_supervisor_id ?? null : null },
       });
-      // Expand the target so the user sees where the person landed.
+      // Expand the target so the person is visible where they landed — but do
+      // not re-root onto it. A cross-branch move used to jump the whole view to
+      // the new manager's branch, which reads as the edit having failed.
       chart.expandNode(targetId);
       rerender();
-      chart.navigateToEmployee(draggedId);
+      chart.revealInPlace(draggedId);
+      const to = nodeFor(targetId);
+      toast(`${node ? node.full_name : draggedId} → ${to ? to.full_name : targetId}`
+            + " · staged, press Save", "ok");
     },
     onSetRoot(draggedId) {
       const node = nodeFor(draggedId);
@@ -2009,6 +2153,9 @@ function installDrag() {
     },
     onDropIntoGroup(draggedId, groupId) {
       addToGroup(draggedId, groupId);
+    },
+    onRejected(reason) {
+      if (reason) toast(reason, "err");
     },
   });
 }

@@ -78,16 +78,48 @@ export function branchMembers(tree, branchRootId) {
  * The server re-validates all of this; client checks are feedback only.
  */
 export function isValidDrop(tree, draggedId, targetId, branchRootId) {
-  if (!draggedId || !targetId || draggedId === targetId) return false;
-  if (invalidTargetsFor(tree, draggedId).has(targetId)) return false;
+  // A drop back onto the current parent changes nothing, so it is a cancel — not
+  // a valid move. Keeping it out of here is what stops the drag layer staging a
+  // no-op reparent and announcing it as staged.
+  if (isNoOpDrop(tree, draggedId, targetId)) return false;
+  return dropRejection(tree, draggedId, targetId, branchRootId) === null;
+}
+
+/**
+ * Why a drop can't be made, or null when it can.
+ *
+ * Separate from isValidDrop so a refused drop can say what was wrong. Silently
+ * doing nothing is indistinguishable from the feature being broken — which is
+ * exactly how it was reported.
+ *
+ * Note what is deliberately *not* here: a person's location, department, site
+ * or entity never restrict where they can report. Moving someone across sites
+ * is a normal reorg, not an error.
+ */
+export function dropRejection(tree, draggedId, targetId, branchRootId) {
+  if (!draggedId || !targetId) return "Dropped outside a card — nothing changed.";
+  if (draggedId === targetId) return "A person can't report to themselves.";
+  if (invalidTargetsFor(tree, draggedId).has(targetId)) {
+    return "That would put someone under their own report.";
+  }
   const parent = findParentIn(tree, draggedId);
-  if (parent && parent.employee_id === targetId) return false;
+  if (parent && parent.employee_id === targetId) return null;   // no-op, not an error
   if (branchRootId) {
     const members = branchMembers(tree, branchRootId);
-    if (!members.has(targetId)) return false;
-    if (findNodeIn(tree, draggedId) && !members.has(draggedId)) return false;
+    if (!members.has(targetId)) {
+      return "That manager is outside the part of the org you can edit.";
+    }
+    if (findNodeIn(tree, draggedId) && !members.has(draggedId)) {
+      return "That person is outside the part of the org you can edit.";
+    }
   }
-  return true;
+  return null;
+}
+
+/** True when the drop is a no-op rather than a refusal. */
+export function isNoOpDrop(tree, draggedId, targetId) {
+  const parent = findParentIn(tree, draggedId);
+  return !!parent && parent.employee_id === targetId;
 }
 
 /**
@@ -331,9 +363,15 @@ export function installDragLayer(api) {
     } else if (wantsRoot) {
       api.onSetRoot(draggedId, fromTray);
     } else {
-      // Dropped on the toolbar, panel, save bar, current parent, or an invalid
-      // card — abort silently, stage nothing.
       requestAnimationFrame(api.drawConnectors);
+      // Say why. A refused drop that looks identical to a broken one is how
+      // "the edit doesn't process" gets reported.
+      if (targetId && isNoOpDrop(api.getTree(), draggedId, targetId)) {
+        api.onRejected("They already report there — nothing to change.");
+      } else if (api.onRejected) {
+        api.onRejected(dropRejection(
+          api.getTree(), draggedId, targetId, api.branchRootId()));
+      }
     }
   });
 

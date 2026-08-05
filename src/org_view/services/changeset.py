@@ -422,6 +422,70 @@ def _next_added_id(snapshot) -> str:
     return f"ADDED-{n}"
 
 
+def _referenced_ids(ops) -> set[str]:
+    """Every id an op points *at* — supervisors and reallocation destinations.
+
+    Deliberately excludes each op's own ``employee_id``: what matters is whether
+    anything would be left dangling if that id turned out not to exist.
+    """
+    out: set[str] = set()
+    for raw in ops:
+        if not isinstance(raw, dict):
+            continue
+        after = raw.get("after") or {}
+        sup = str(after.get("raw_supervisor_id") or "").strip()
+        if sup:
+            out.add(sup)
+        for dest in (after.get("reassign") or {}).values():
+            dest = str(dest or "").strip()
+            if dest:
+                out.add(dest)
+    return out
+
+
+def _landed_add_id(correction, snapshot, real_id: str) -> str | None:
+    """The employee_id an add-person correction actually ended up as, or None.
+
+    ``_apply_add_person`` has three outcomes and only one of them creates
+    ``real_id``:
+
+    * applied  — the row exists under ``real_id``.
+    * resolved — the census already covers this person. Under their own badge
+      number that *is* ``real_id``; under a different one (matched by name) the
+      real row is theirs, and anyone the user put under the new role belongs
+      under that row instead. Returning it keeps the rest of the batch pointing
+      somewhere real.
+    * conflict — nothing was created and there is nothing to point at.
+
+    Without this, a reparent staged onto a role that resolved or conflicted wrote
+    a supervisor id that matched no Employee. ``_fetch_employees`` then filed that
+    person under a parent it never visits, so they dropped off the chart entirely
+    while the save reported success — the census defect this whole feature exists
+    to surface, introduced by the tool itself.
+    """
+    if Employee.objects.filter(snapshot=snapshot, employee_id=real_id).exists():
+        return real_id
+    after = correction.after or {}
+    first = str(after.get("first_name") or "").strip()
+    last = str(after.get("last_name") or "").strip()
+    if not (first or last):
+        return None
+    candidates = list(
+        Employee.objects.filter(snapshot=snapshot, first_name=first, last_name=last)
+        .exclude(employee_id=real_id)
+        .exclude(employee_status=Employee.EXCLUDED_STATUS)
+    )
+    # Prefer a row the export owns, matching which row _apply_add_person stood
+    # down for. Filtered in Python for the same reason it is there: an absent
+    # JSON key compares as NULL, so .exclude() on it drops the rows we want.
+    source_owned = [
+        e for e in candidates
+        if not (e.raw_data or {}).get(Employee.ADDED_BY_CORRECTION_KEY)
+    ]
+    twin = next(iter(source_owned or candidates), None)
+    return twin.employee_id if twin else None
+
+
 def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
     kind_for = {
         "reparent": StructureCorrection.Kind.REPARENT,
@@ -437,6 +501,12 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
     def resolve(value):
         value = str(value or "").strip()
         return id_map.get(value, value)
+
+    # Which staged ids other ops lean on. An `add` that doesn't materialize a row
+    # is harmless on its own, but if something reports to it the write below would
+    # point that person at an id no Employee has — orphaning them off the chart on
+    # a save that reported success. See _landed_add_id.
+    referenced = _referenced_ids(ops)
 
     for raw in ops:
         name = raw["op"]
@@ -466,7 +536,25 @@ def _commit_corrections(ops, *, company, snapshot, user) -> tuple[int, dict]:
                 correction.replay_status = status
                 correction.replay_detail = detail
                 correction.save(update_fields=["replay_status", "replay_detail", "updated_at"])
-            id_map[str(raw["employee_id"]).strip()] = real_id
+
+            staged_id = str(raw["employee_id"]).strip()
+            landed = _landed_add_id(correction, snapshot, real_id)
+            if landed is None:
+                if staged_id in referenced:
+                    # Refuse the batch rather than write reports onto a manager
+                    # that was never created. Atomic, so nothing else lands
+                    # either. The reason comes from apply_correction; the
+                    # consequence is the part the user needs to act on.
+                    reason = (detail or f"{real_id} could not be added.").rstrip()
+                    raise ChangesetError([{
+                        "index": ops.index(raw), "op": "add", "employee_id": real_id,
+                        "error": f"{reason} The people you put under them have "
+                                 f"nowhere to go, so nothing was saved.",
+                    }])
+                # Nothing depends on it; the correction records why it stood down.
+                applied += 1
+                continue
+            id_map[staged_id] = landed
             applied += 1
             continue
 

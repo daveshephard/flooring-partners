@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import {
-  invalidTargetsFor, isValidDrop, edgePanDelta, branchMembers,
+  invalidTargetsFor, isValidDrop, edgePanDelta, branchMembers, dropRejection,
   EDGE_ZONE, MAX_PAN_SPEED,
 } from "../drag.js";
 
@@ -73,6 +73,29 @@ check("isValidDrop rejects out-of-branch for a restricted editor", () => {
   assert.equal(branchMembers(tree, "E2").size, 6);
   assert.equal(isValidDrop(tree, "E3", "E5", "E2"), true);
   assert.equal(isValidDrop(tree, "E3", "E8", "E2"), false);
+});
+
+check("a move across sites, departments and branches is always allowed", () => {
+  /* Reported as "can't reparent when the report is in a different location or
+     department". Nothing about where someone works may restrict who they report
+     to — a manager taking on a second site is an ordinary reorg. The fixture's
+     E3 and E9 sit in different departments under different managers. */
+  const e3 = { branch: "E2", dept: "Ops" };
+  const e9 = { branch: "E8", dept: "Finance" };
+  assert.ok(e3.branch !== e9.branch && e3.dept !== e9.dept, "fixture must differ");
+  assert.equal(isValidDrop(tree, "E3", "E8", null), true, "cross-branch move");
+  assert.equal(isValidDrop(tree, "E9", "E2", null), true, "and back the other way");
+  assert.equal(isValidDrop(tree, "E6", "E8", null), true, "deep to another branch");
+  assert.equal(dropRejection(tree, "E3", "E8", null), null);
+});
+
+check("a refused drop says why, so it can't look like a broken feature", () => {
+  assert.match(dropRejection(tree, "E5", "E5", null), /themselves/);
+  assert.match(dropRejection(tree, "E5", "E6", null), /own report/);
+  assert.match(dropRejection(tree, "E3", null, null), /outside a card/);
+  assert.match(dropRejection(tree, "E3", "E8", "E2"), /outside the part of the org/);
+  // Dropping where they already are is a no-op, not a refusal.
+  assert.equal(dropRejection(tree, "E6", "E5", null), null);
 });
 
 /* ── edgePanDelta ────────────────────────────────────────────────── */

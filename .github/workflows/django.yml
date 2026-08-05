@@ -56,14 +56,13 @@ jobs:
       with:
         node-version: "20"
 
-    - name: Client/server metric parity
-      run: node src/static/org_view/js/__tests__/metrics.parity.mjs
-
-    - name: Drag + changeset logic
-      run: node src/static/org_view/js/__tests__/drag.logic.mjs
-
-    - name: Edit shell static checks
-      run: node src/static/org_view/js/__tests__/shell.static.mjs
-
-    - name: Card palette contract
-      run: node src/static/org_view/js/__tests__/palette.mjs
+    # Globbed rather than listed one per step: the suites were named individually
+    # and a newly added one simply never ran here. Each script prints its own
+    # name, so the log stays just as readable, and `bash -e` fails the step on the
+    # first non-zero exit.
+    - name: Browser module tests
+      run: |
+        for f in src/static/org_view/js/__tests__/*.mjs; do
+          echo "── $f"
+          node "$f"
+        done
